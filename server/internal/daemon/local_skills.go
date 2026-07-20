@@ -37,9 +37,10 @@ type runtimeLocalSkillSummary struct {
 	// Older daemons that predate multi-root discovery omit the field; the
 	// server treats an empty value as "unknown" rather than a provider/
 	// universal assertion.
-	Root      string `json:"root,omitempty"`
-	Plugin    string `json:"plugin,omitempty"`
-	FileCount int    `json:"file_count"`
+	Root       string `json:"root,omitempty"`
+	Plugin     string `json:"plugin,omitempty"`
+	CanDisable bool   `json:"can_disable,omitempty"`
+	FileCount  int    `json:"file_count"`
 }
 
 type runtimeLocalSkillBundle struct {
@@ -480,6 +481,7 @@ func enumerateLocalSkills(
 				Provider:    provider,
 				Root:        root.kind,
 				Plugin:      root.plugin,
+				CanDisable:  provider == "codex" || provider == "claude",
 				// `files` is the supporting bundle (collectLocalSkillFiles
 				// intentionally excludes SKILL.md so the bundle's `Content`
 				// field can carry it without duplication on import). For the

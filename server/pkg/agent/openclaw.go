@@ -8,7 +8,9 @@ import (
 	"fmt"
 	"io"
 	"log/slog"
+	"os"
 	"os/exec"
+	"path/filepath"
 	"regexp"
 	"strconv"
 	"strings"
@@ -85,6 +87,17 @@ func (b *openclawBackend) Execute(ctx context.Context, prompt string, opts ExecO
 	cmd.WaitDelay = 10 * time.Second
 	if opts.Cwd != "" {
 		cmd.Dir = opts.Cwd
+	}
+	// KAV-14 v4: OpenClaw looks up its active config file relative to
+	// cwd, and the daemon previously chdir'd into the task workspace
+	// which broke config lookup ("openclaw config file: exit status 1").
+	// Force cwd to ~/.openclaw so OpenClaw always finds its config
+	// regardless of opts.Cwd. Allow override via OPENCLAW_CONFIG_DIR
+	// env var for users with non-default layouts.
+	if configDir := os.Getenv("OPENCLAW_CONFIG_DIR"); configDir != "" {
+		cmd.Dir = configDir
+	} else if homeDir, err := os.UserHomeDir(); err == nil {
+		cmd.Dir = filepath.Join(homeDir, ".openclaw")
 	}
 	cmd.Env = buildEnv(b.cfg.Env)
 

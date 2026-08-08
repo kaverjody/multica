@@ -211,6 +211,12 @@ import type {
   ReviewArtifactRequest,
   ReviewArtifactResponse,
   CreateArtifactRequest,
+  ExportResourceTemplateRequest,
+  ExportResourceTemplateResponse,
+  ValidateResourceTemplateRequest,
+  ValidateResourceTemplateResponse,
+  ApplyResourceTemplateRequest,
+  ApplyResourceTemplateResponse,
 } from "../types";
 import type { OnboardingCompletionPath } from "../onboarding/types";
 import type { CreateFeedbackResponse, FeedbackKind } from "../feedback/types";
@@ -3678,5 +3684,36 @@ export class ApiClient {
 
   async deleteIssueTemplate(id: string): Promise<void> {
     await this.fetch(`/api/issue-templates/${id}`, { method: "DELETE" });
+  }
+
+  // Resource templates (CLO-245): export/validate/apply portable agent & squad
+  // templates. The workspace is resolved server-side from the X-Workspace-Slug
+  // header (sent by authHeaders), so no workspace_id query is needed from the
+  // Web client. See server/internal/handler/resource_template.go.
+  async exportResourceTemplate(
+    data: ExportResourceTemplateRequest,
+  ): Promise<ExportResourceTemplateResponse> {
+    return this.fetch(`/api/templates/export`, {
+      method: "POST",
+      body: JSON.stringify(data),
+    });
+  }
+
+  async validateResourceTemplate(
+    data: ValidateResourceTemplateRequest,
+  ): Promise<ValidateResourceTemplateResponse> {
+    return this.fetch(`/api/templates/validate`, {
+      method: "POST",
+      body: JSON.stringify(data),
+    });
+  }
+
+  async applyResourceTemplate(
+    data: ApplyResourceTemplateRequest,
+  ): Promise<ApplyResourceTemplateResponse> {
+    return this.fetch(`/api/templates/apply`, {
+      method: "POST",
+      body: JSON.stringify(data),
+    });
   }
 }

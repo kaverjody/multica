@@ -21,10 +21,11 @@ import {
   DialogHeader,
   DialogTitle,
 } from "@multica/ui/components/ui/dialog";
-import { Archive, ArchiveRestore, Loader2, X } from "lucide-react";
+import { Archive, ArchiveRestore, Download, Loader2, Upload, X } from "lucide-react";
 import { useT } from "../../i18n";
 import { AccessPicker, type AccessChange } from "./inspector/access-picker";
 import type { AgentListRow } from "./agents-page";
+import { exportAndDownload } from "../../common/resource-template-export";
 
 /**
  * Floating batch-toolbar for the agents list page. Renders archive/restore
@@ -41,13 +42,16 @@ export function AgentBatchToolbar({
   members,
   currentUserId,
   onClear,
+  onImport,
 }: {
   rows: AgentListRow[];
   members: MemberWithUser[];
   currentUserId: string | null;
   onClear: () => void;
+  onImport?: () => void;
 }) {
   const { t } = useT("agents");
+  const { t: tt } = useT("templates");
   const wsId = useWorkspaceId();
   const qc = useQueryClient();
   const shouldReduceMotion = useReducedMotion() ?? false;
@@ -55,6 +59,7 @@ export function AgentBatchToolbar({
   const [confirmAccess, setConfirmAccess] = useState(false);
   const [accessChange, setAccessChange] = useState<AccessChange | null>(null);
   const [busy, setBusy] = useState(false);
+  const [exporting, setExporting] = useState(false);
 
   // Must be stable: AccessPicker lists this in the effect that notifies us, so
   // an inline callback would re-notify on every render we cause by storing the
@@ -81,6 +86,31 @@ export function AgentBatchToolbar({
 
   const invalidate = () =>
     qc.invalidateQueries({ queryKey: workspaceKeys.agents(wsId) });
+
+  const handleExport = async () => {
+    setExporting(true);
+    try {
+      const { exported, failed } = await exportAndDownload(
+        rows.map((r) => ({
+          kind: "agent" as const,
+          resourceId: r.agent.id,
+          name: r.agent.name,
+        })),
+      );
+      if (exported.length > 0) {
+        toast.success(
+          tt(($) => $.export.done, { count: exported.length }),
+        );
+      }
+      if (failed.length > 0) {
+        toast.error(
+          tt(($) => $.export.failed, { error: failed[0]!.error }),
+        );
+      }
+    } finally {
+      setExporting(false);
+    }
+  };
 
   const accessConfirmEnabled = accessChange !== null;
 
@@ -211,6 +241,33 @@ export function AgentBatchToolbar({
             {t(($) => $.row_actions.set_access)}
           </Button>
         )}
+        {/* Template export/import (CLO-399). Export downloads the selected
+            agents as portable JSON; Import opens the shared wizard that
+            reuses the CLO-245 validate/apply endpoints. */}
+        {anyActive && (
+          <Button
+            variant="ghost"
+            size="sm"
+            disabled={!anyOwned || busy || exporting}
+            onClick={handleExport}
+          >
+            {exporting ? (
+              <Loader2 className="mr-1 size-3.5 animate-spin" />
+            ) : (
+              <Download className="mr-1 size-3.5" />
+            )}
+            {tt(($) => $.export.button)}
+          </Button>
+        )}
+        <Button
+          variant="ghost"
+          size="sm"
+          disabled={busy}
+          onClick={() => onImport?.()}
+        >
+          <Upload className="mr-1 size-3.5" />
+          {tt(($) => $.import.button)}
+        </Button>
         {/* Archive sits last: it is the destructive action, kept furthest from
             the other batch actions. */}
         {anyActive && (

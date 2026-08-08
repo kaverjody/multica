@@ -4,6 +4,7 @@ import { useState } from "react";
 import {
   AlertCircle,
   Copy,
+  Download,
   MoreHorizontal,
   RotateCcw,
   Square,
@@ -16,6 +17,7 @@ import type { AgentPresenceDetail } from "@multica/core/agents";
 import { api } from "@multica/core/api";
 import { useWorkspaceId } from "@multica/core/hooks";
 import { workspaceKeys } from "@multica/core/workspace/queries";
+import { exportAndDownload } from "../../common/resource-template-export";
 import {
   AlertDialog,
   AlertDialogAction,
@@ -67,11 +69,13 @@ export function AgentRowActions({
   onDuplicate,
 }: AgentRowActionsProps) {
   const { t } = useT("agents");
+  const { t: tt } = useT("templates");
   const wsId = useWorkspaceId();
   const qc = useQueryClient();
 
   const [confirmArchive, setConfirmArchive] = useState(false);
   const [confirmCancel, setConfirmCancel] = useState(false);
+  const [exporting, setExporting] = useState(false);
 
   const isArchived = !!agent.archived_at;
   const runningCount = presence?.runningCount ?? 0;
@@ -83,13 +87,32 @@ export function AgentRowActions({
   // branches.
   const showStop = canManage && !isArchived && hasActiveWork;
   const showDuplicate = !isArchived; // any workspace member can duplicate
+  const showExport = canManage; // export mirrors the batch toolbar's owned-only gate
   const showArchive = canManage && !isArchived;
   const showRestore = canManage && isArchived;
 
-  const hasAnyAction = showStop || showDuplicate || showArchive || showRestore;
+  const hasAnyAction =
+    showStop || showDuplicate || showExport || showArchive || showRestore;
 
   const invalidateAgents = () => {
     qc.invalidateQueries({ queryKey: workspaceKeys.agents(wsId) });
+  };
+
+  const handleExport = async () => {
+    setExporting(true);
+    try {
+      const { exported, failed } = await exportAndDownload([
+        { kind: "agent", resourceId: agent.id, name: agent.name },
+      ]);
+      if (exported.length > 0) {
+        toast.success(tt(($) => $.export.done, { name: agent.name, count: 1 }));
+      }
+      if (failed.length > 0) {
+        toast.error(tt(($) => $.export.failed, { error: failed[0]!.error }));
+      }
+    } finally {
+      setExporting(false);
+    }
   };
 
   const handleArchive = async () => {
@@ -157,6 +180,12 @@ export function AgentRowActions({
             <DropdownMenuItem onClick={() => onDuplicate(agent)}>
               <Copy className="h-3.5 w-3.5" />
               {t(($) => $.row_actions.duplicate)}
+            </DropdownMenuItem>
+          )}
+          {showExport && (
+            <DropdownMenuItem disabled={exporting} onClick={() => void handleExport()}>
+              <Download className="h-3.5 w-3.5" />
+              {tt(($) => $.export.button)}
             </DropdownMenuItem>
           )}
           {showRestore && (

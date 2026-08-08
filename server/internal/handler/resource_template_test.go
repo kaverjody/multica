@@ -1348,3 +1348,75 @@ func TestApplyResourceTemplate_PermissionOverridePrecedence(t *testing.T) {
 		t.Errorf("per-ref override should beat top-level: permission_mode = %q, want public_to", pm)
 	}
 }
+
+// TestApplyResourceTemplate_AgentTopLevelNameOverride covers the Web wizard's
+// rename tweak (CLO-399): the frontend sends overrides.name for a single
+// agent template and expects the created agent to carry that name instead of
+// the spec name.
+func TestApplyResourceTemplate_AgentTopLevelNameOverride(t *testing.T) {
+	if testHandler == nil || testPool == nil {
+		t.Skip("database not available")
+	}
+	name := uniqueName("apply-name-ov")
+	renamed := uniqueName("apply-name-renamed")
+	code, resp, body := doApply(t, map[string]any{
+		"template":          agentTemplate(name, nil),
+		"target_runtime_id": handlerTestRuntimeID(t),
+		"overrides":         map[string]any{"name": renamed},
+	})
+	if code != http.StatusOK || !resp.Applied {
+		t.Fatalf("apply failed: code=%d resp=%+v body=%s", code, resp, body)
+	}
+	if len(resp.Created.Agents) != 1 || resp.Created.Agents[0].Name != renamed {
+		t.Fatalf("created agents = %+v, want single agent named %q", resp.Created.Agents, renamed)
+	}
+	cleanupAgentByID(t, resp.Created.Agents[0].ID)
+	if countAgentsNamed(t, name) != 0 {
+		t.Fatal("spec name must not be used when overrides.name is set")
+	}
+}
+
+// TestApplyResourceTemplate_SquadTopLevelNameOverride covers the same Web
+// wizard rename tweak for squad templates (CLO-399): overrides.name renames
+// the materialised squad.
+func TestApplyResourceTemplate_SquadTopLevelNameOverride(t *testing.T) {
+	if testHandler == nil || testPool == nil {
+		t.Skip("database not available")
+	}
+	squadName := uniqueName("apply-sq-name-ov")
+	renamed := uniqueName("apply-sq-renamed")
+	leaderName := uniqueName("apply-sq-name-lead")
+	members := []map[string]any{
+		memberRef("lead", "leader", map[string]any{
+			"name": leaderName, "description": "", "instructions": "",
+			"thinking_level": "", "service_tier": "", "permission_mode": "private",
+			"custom_args": []string{}, "skills": []any{}, "custom_env_keys": []any{}, "mcp_servers": []any{},
+		}),
+	}
+	code, resp, body := doApply(t, map[string]any{
+		"template":          squadTemplate(squadName, "embedded", "lead", members),
+		"target_runtime_id": handlerTestRuntimeID(t),
+		"overrides":         map[string]any{"name": renamed},
+	})
+	if code != http.StatusOK || !resp.Applied {
+		t.Fatalf("squad apply with name override failed: code=%d resp=%+v body=%s", code, resp, body)
+	}
+	if len(resp.Created.Squads) != 1 || resp.Created.Squads[0].Name != renamed {
+		t.Fatalf("created squads = %+v, want single squad named %q", resp.Created.Squads, renamed)
+	}
+	squadID := resp.Created.Squads[0].ID
+	for _, a := range resp.Created.Agents {
+		cleanupAgentByID(t, a.ID)
+	}
+	t.Cleanup(func() {
+		testPool.Exec(context.Background(), `DELETE FROM squad WHERE id = $1`, squadID)
+	})
+	var got string
+	if err := testPool.QueryRow(context.Background(),
+		`SELECT name FROM squad WHERE id = $1`, squadID).Scan(&got); err != nil {
+		t.Fatalf("load squad: %v", err)
+	}
+	if got != renamed {
+		t.Errorf("squad name = %q, want %q", got, renamed)
+	}
+}

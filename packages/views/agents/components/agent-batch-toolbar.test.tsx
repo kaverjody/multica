@@ -6,14 +6,22 @@ import { QueryClient, QueryClientProvider } from "@tanstack/react-query";
 import { I18nProvider } from "@multica/core/i18n/react";
 import enCommon from "../../locales/en/common.json";
 import enAgents from "../../locales/en/agents.json";
+import enTemplates from "../../locales/en/templates.json";
 
-const TEST_RESOURCES = { en: { common: enCommon, agents: enAgents } };
+const TEST_RESOURCES = {
+  en: { common: enCommon, agents: enAgents, templates: enTemplates },
+};
 
 const updateAgentSpy = vi.hoisted(() =>
   vi.fn(async (_id: string, _patch: Record<string, unknown>) => ({})),
 );
 const archiveSpy = vi.hoisted(() => vi.fn(async () => ({})));
 const restoreSpy = vi.hoisted(() => vi.fn(async () => ({})));
+const exportTemplateSpy = vi.hoisted(() =>
+  vi.fn(async (_req: { resource_id: string }) => ({
+    template: { schema_version: "1.0", kind: "agent", metadata: { name: "Agent a" } },
+  })),
+);
 
 vi.mock("@multica/core/hooks", () => ({
   useWorkspaceId: () => "ws-1",
@@ -23,6 +31,7 @@ vi.mock("@multica/core/api", () => ({
     updateAgent: updateAgentSpy,
     archiveAgent: archiveSpy,
     restoreAgent: restoreSpy,
+    exportResourceTemplate: exportTemplateSpy,
   },
 }));
 vi.mock("../../common/actor-avatar", () => ({
@@ -112,6 +121,7 @@ function renderToolbar(rows: AgentListRow[]) {
 beforeEach(() => {
   updateAgentSpy.mockClear();
   updateAgentSpy.mockResolvedValue({});
+  exportTemplateSpy.mockClear();
 });
 
 describe("AgentBatchToolbar — action order", () => {
@@ -128,7 +138,31 @@ describe("AgentBatchToolbar — action order", () => {
       .map((b) => b.textContent?.trim())
       .filter((text): text is string => !!text);
 
-    expect(actions).toEqual(["Restore", "Set access scope", "Archive"]);
+    expect(actions).toEqual([
+      "Restore",
+      "Set access scope",
+      "Export",
+      "Import",
+      "Archive",
+    ]);
+  });
+
+  it("exports every selected owned agent as a template (CLO-399)", async () => {
+    renderToolbar([makeRow("a", "user-1"), makeRow("b", "user-1")]);
+
+    fireEvent.click(screen.getByRole("button", { name: "Export" }));
+
+    await waitFor(() => expect(exportTemplateSpy).toHaveBeenCalledTimes(2));
+    expect(exportTemplateSpy.mock.calls.map((c) => c[0]!.resource_id).sort()).toEqual([
+      "a",
+      "b",
+    ]);
+  });
+
+  it("disables Export when none of the selected agents are owned", () => {
+    renderToolbar([makeRow("c", "user-2")]);
+    expect(screen.getByRole("button", { name: "Export" })).toBeDisabled();
+    expect(screen.getByRole("button", { name: "Import" })).toBeEnabled();
   });
 });
 

@@ -85,7 +85,10 @@ export function ResourceTemplateImportDialog({
   const [entries, setEntries] = useState<TemplateEntry[]>([]);
   const [uploadError, setUploadError] = useState<string | null>(null);
   const [targetRuntimeId, setTargetRuntimeId] = useState("");
-  const [conflictPolicy, setConflictPolicy] = useState<ConflictPolicy>("rename");
+  // CLO-417: name conflicts default to fail — the wizard never auto-renames
+  // behind the user's back. The Conflict step prompts an editable name, and
+  // rename/skip remain explicit opt-in policies.
+  const [conflictPolicy, setConflictPolicy] = useState<ConflictPolicy>("fail");
   const [envValues, setEnvValues] = useState<Record<string, Record<string, string>>>({});
   const [installSkills, setInstallSkills] = useState<Record<string, boolean>>({});
   const [membersMode, setMembersMode] = useState<TemplateMembersMode>("embedded");
@@ -117,7 +120,7 @@ export function ResourceTemplateImportDialog({
     setEntries([]);
     setUploadError(null);
     setTargetRuntimeId("");
-    setConflictPolicy("rename");
+    setConflictPolicy("fail");
     setEnvValues({});
     setInstallSkills({});
     setMembersMode("embedded");
@@ -264,6 +267,21 @@ export function ResourceTemplateImportDialog({
     [entries],
   );
 
+  // CLO-417: with the default fail policy, the user resolves a name conflict by
+  // editing the name in the review step (nameOverride), then confirming — the
+  // apply is only enabled once every conflicting template has been renamed to a
+  // non-conflicting value. rename/skip remain explicit opt-in policies.
+  const conflictResolvedByRename = useMemo(() => {
+    if (aggregatedConflicts.length === 0) return true;
+    return entries.every((e) => {
+      const cs = e.validate?.plan.conflicts ?? [];
+      if (cs.length === 0) return true;
+      const original = displayName(e.doc);
+      const override = e.nameOverride?.trim();
+      return !!override && override !== original;
+    });
+  }, [entries, aggregatedConflicts]);
+
   // Q4: skills the user did NOT opt into installing — surfaced as a
   // post-creation checklist on the done step.
   const remainingSkills = useMemo(
@@ -315,12 +333,15 @@ export function ResourceTemplateImportDialog({
     blockingErrors === 0 &&
     !applying &&
     !anyValidating &&
-    // fail policy + live conflicts = the apply would be rejected by design
-    // (CLO-245 conflictPolicy=fail → 409); force rename/skip instead.
-    (aggregatedConflicts.length === 0 || conflictPolicy !== "fail") &&
+    // CLO-417: fail policy + live conflicts is the default; the apply stays
+    // enabled only once the user renamed the conflicting templates (the
+    // Conflict step). rename/skip are the explicit alternatives.
+    (aggregatedConflicts.length === 0 ||
+      conflictPolicy !== "fail" ||
+      conflictResolvedByRename) &&
     // "overwrite-type" resolutions (rename/skip) need explicit acknowledgement
     // when conflicts actually exist (UX v1.1 second-confirm).
-    (aggregatedConflicts.length === 0 || conflictAcknowledged);
+    (aggregatedConflicts.length === 0 || conflictPolicy === "fail" || conflictAcknowledged);
 
   const doApply = useCallback(async () => {
     setApplying(true);
@@ -646,6 +667,12 @@ export function ResourceTemplateImportDialog({
                     {e.doc.kind ?? "agent"}
                   </span>
                 </div>
+                {(e.validate?.plan.conflicts?.length ?? 0) > 0 && (
+                  <p className="mb-1.5 flex items-start gap-1.5 text-xs text-amber-600">
+                    <AlertCircle className="mt-0.5 size-3.5 shrink-0" />
+                    <span>{t(($) => $.import.conflict_entry_hint)}</span>
+                  </p>
+                )}
                 {e.validate?.errors && e.validate.errors.length > 0 && (
                   <ul className="list-inside list-disc space-y-0.5 text-xs text-destructive">
                     {e.validate.errors.map((err, j) => (

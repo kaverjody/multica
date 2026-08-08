@@ -157,11 +157,11 @@ describe("ResourceTemplateImportDialog", () => {
     );
     await screen.findByText(/My Agent/i);
 
-    // Apply (default conflict policy is rename per PRD AC-Import-3-2).
+    // Apply (default conflict policy is fail per CLO-417).
     fireEvent.click(screen.getByRole("button", { name: /^import$/i }));
     await waitFor(() => expect(applySpy).toHaveBeenCalledTimes(1));
     const applyReq = applySpy.mock.calls[0]![0] as Record<string, unknown>;
-    expect(applyReq.conflict_policy).toBe("rename");
+    expect(applyReq.conflict_policy).toBe("fail");
     expect(applyReq.template).toEqual(AGENT_DOC);
     expect(applyReq.target_runtime_id).toBe("rt-1");
     expect(applyReq.idempotency_key).toBeTruthy();
@@ -255,7 +255,51 @@ describe("ResourceTemplateImportDialog", () => {
     expect((validateSpy.mock.calls[0]![0] as { template: { template_id: string } }).template.template_id).toBe("tpl-1");
   });
 
-  it("requires acknowledging conflicts before apply when policy is rename", async () => {
+  it("blocks apply under the default fail policy until the conflicting name is edited, then imports (CLO-417)", async () => {
+    validateSpy.mockResolvedValue(
+      validResponse({
+        agents_to_create: [],
+        squads_to_create: [],
+        conflicts: [
+          { kind: "agent", name: "My Agent", existing_id: "ag-0" },
+        ],
+      }),
+    );
+    applySpy.mockResolvedValue({
+      applied: true,
+      dry_run: false,
+      created: { agents: [{ ref: "My Agent", id: "ag-1", name: "My Agent-renamed" }], squads: [], skills: [] },
+      resource_mapping: {},
+      rolled_back: false,
+      idempotent_replay: false,
+    });
+
+    renderDialog();
+    await uploadFile("agent.json", AGENT_DOC);
+    await screen.findByText(/target runtime/i);
+    fireEvent.change(screen.getByLabelText(/target runtime/i), { target: { value: "rt-1" } });
+    fireEvent.click(screen.getByRole("button", { name: /validate/i }));
+    // The conflict is surfaced on the entry card.
+    await screen.findByText(/This template has a name conflict/i);
+
+    // Default policy is fail, and the apply stays disabled until the name is
+    // edited to a non-conflicting value.
+    const apply = screen.getByRole("button", { name: /^import$/i });
+    expect(apply).toBeDisabled();
+
+    // Renaming the template in the review step resolves the conflict.
+    fireEvent.change(screen.getByLabelText(/^name$/i), {
+      target: { value: "My Agent-renamed" },
+    });
+    await waitFor(() => expect(apply).toBeEnabled());
+    fireEvent.click(apply);
+    await waitFor(() => expect(applySpy).toHaveBeenCalledTimes(1));
+    const applyReq = applySpy.mock.calls[0]![0] as Record<string, unknown>;
+    expect(applyReq.conflict_policy).toBe("fail");
+    expect((applyReq.overrides as { name?: string }).name).toBe("My Agent-renamed");
+  });
+
+  it("requires acknowledging conflicts before apply when policy is switchable to rename", async () => {
     validateSpy.mockResolvedValue(
       validResponse({
         agents_to_create: [],
@@ -279,17 +323,20 @@ describe("ResourceTemplateImportDialog", () => {
     await screen.findByText(/target runtime/i);
     fireEvent.change(screen.getByLabelText(/target runtime/i), { target: { value: "rt-1" } });
     fireEvent.click(screen.getByRole("button", { name: /validate/i }));
-    // The conflict badge in the plan summary and the acknowledgement label
-    // both mention "name conflicts" — anchor on the acknowledgement text.
-    await screen.findByText(/i understand 1 name conflicts/i);
+    await screen.findByText(/This template has a name conflict/i);
 
-    // Apply stays disabled until the acknowledgement is checked.
+    // Switch to the explicit rename policy — the ack then gates the apply.
+    fireEvent.click(
+      screen.getAllByLabelText(/create with a new name/i)[0]!,
+    );
     const apply = screen.getByRole("button", { name: /^import$/i });
     expect(apply).toBeDisabled();
     fireEvent.click(screen.getByRole("checkbox", { name: /i understand 1 name conflicts/i }));
     await waitFor(() => expect(apply).toBeEnabled());
     fireEvent.click(apply);
     await waitFor(() => expect(applySpy).toHaveBeenCalledTimes(1));
+    const applyReq = applySpy.mock.calls[0]![0] as Record<string, unknown>;
+    expect(applyReq.conflict_policy).toBe("rename");
   });
 
   it("passes members_mode for squad templates and blocks apply on validate errors", async () => {

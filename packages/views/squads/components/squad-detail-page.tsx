@@ -538,7 +538,9 @@ function AddMemberDialog({
     if (!target) return;
     setSubmitting(true);
     try {
-      await onSubmit({ type: target.type, id: target.id, role });
+      // CLO-418: the backend requires a role for every member; default to
+      // "member" when the user left it blank.
+      await onSubmit({ type: target.type, id: target.id, role: role.trim() || "member" });
       onClose();
     } catch {
       setSubmitting(false);

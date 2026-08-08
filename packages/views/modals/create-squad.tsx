@@ -157,7 +157,9 @@ export function CreateSquadModal({ onClose }: { onClose: () => void }) {
             ? selectedMembers.map((m) => ({
                 member_type: m.type,
                 member_id: m.id,
-                role: m.role?.trim() || undefined,
+                // CLO-418: the backend requires a role for every member; the
+                // UI default is "member" when the user left it blank.
+                role: m.role?.trim() || "member",
               }))
             : undefined,
       });

@@ -7,6 +7,7 @@ import (
 	"log/slog"
 	"net/http"
 	"strconv"
+	"strings"
 	"time"
 
 	"github.com/go-chi/chi/v5"
@@ -152,6 +153,25 @@ func (h *Handler) memberCanWireAgent(ctx context.Context, member db.Member, agen
 	}
 	uid := uuidToString(member.UserID)
 	return h.canInvokeAgent(ctx, agent, "member", uid, uid, workspaceID)
+}
+
+// squadMemberRoleLeader is the role the squad leader carries in squad_member
+// (kept in sync with resourcetmpl.RoleLeader used by template validation).
+const squadMemberRoleLeader = "leader"
+
+// normalizeSquadMemberRole validates a squad-member role. Roles are
+// free-form labels in the product (frontend AddMemberDialog / create-squad
+// accept arbitrary text such as "Reviewer" or "Frontend Lead"); the only
+// hard constraints here are CLO-418: the role must be present and
+// non-whitespace, and no longer than a sane bound so a typo can never
+// produce an empty role that later breaks template export/validation. The
+// canonical "leader" role is reserved for the squad leader.
+func normalizeSquadMemberRole(role string) (string, bool) {
+	r := strings.TrimSpace(role)
+	if r == "" || len(r) > 200 {
+		return "", false
+	}
+	return r, true
 }
 
 // loadSquadInWorkspace loads a squad scoped to the current workspace.
@@ -400,6 +420,13 @@ func (h *Handler) CreateSquad(w http.ResponseWriter, r *http.Request) {
 			fail("leader is already a member")
 			continue
 		}
+		// Role is required for every member (CLO-418): an empty role would
+		// otherwise be persisted and later break template export/validation.
+		role, ok := normalizeSquadMemberRole(m.Role)
+		if !ok {
+			fail("role is required")
+			continue
+		}
 		if m.MemberType == "agent" {
 			agent, err := h.Queries.GetAgentInWorkspace(r.Context(), db.GetAgentInWorkspaceParams{
 				ID: memberUUID, WorkspaceID: wsUUID,
@@ -424,7 +451,7 @@ func (h *Handler) CreateSquad(w http.ResponseWriter, r *http.Request) {
 		members = append(members, validatedMember{
 			memberType: m.MemberType,
 			memberID:   memberUUID,
-			role:       m.Role,
+			role:       role,
 		})
 	}
 	if len(failedMembers) > 0 {

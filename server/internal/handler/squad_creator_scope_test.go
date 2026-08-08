@@ -96,6 +96,7 @@ func TestManageSquad_CreatorCanManageOwn(t *testing.T) {
 	testHandler.AddSquadMember(w, squadScopeReq(memberID, "POST", "/api/squads/members", map[string]any{
 		"member_type": "agent",
 		"member_id":   worker,
+		"role":        "worker",
 	}, map[string]string{"id": squad.ID}))
 	if w.Code != http.StatusCreated {
 		t.Fatalf("AddSquadMember as creator: expected 201, got %d: %s", w.Code, w.Body.String())
@@ -168,6 +169,7 @@ func TestAddSquadMember_CreatorAgentAccessGate(t *testing.T) {
 	testHandler.AddSquadMember(w, squadScopeReq(memberID, "POST", "/api/squads/members", map[string]any{
 		"member_type": "agent",
 		"member_id":   publicWorkerID,
+		"role":        "worker",
 	}, map[string]string{"id": squad.ID}))
 	if w.Code != http.StatusCreated {
 		t.Fatalf("AddSquadMember public agent: expected 201, got %d: %s", w.Code, w.Body.String())
@@ -178,6 +180,7 @@ func TestAddSquadMember_CreatorAgentAccessGate(t *testing.T) {
 	testHandler.AddSquadMember(w, squadScopeReq(memberID, "POST", "/api/squads/members", map[string]any{
 		"member_type": "agent",
 		"member_id":   privateAgentID,
+		"role":        "worker",
 	}, map[string]string{"id": squad.ID}))
 	if w.Code != http.StatusForbidden {
 		t.Fatalf("AddSquadMember private agent as creator: expected 403, got %d: %s", w.Code, w.Body.String())
@@ -188,6 +191,7 @@ func TestAddSquadMember_CreatorAgentAccessGate(t *testing.T) {
 	testHandler.AddSquadMember(w, squadScopeReq("", "POST", "/api/squads/members", map[string]any{
 		"member_type": "agent",
 		"member_id":   privateAgentID,
+		"role":        "worker",
 	}, map[string]string{"id": squad.ID}))
 	if w.Code != http.StatusCreated {
 		t.Fatalf("AddSquadMember private agent as owner: expected 201, got %d: %s", w.Code, w.Body.String())

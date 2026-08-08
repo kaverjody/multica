@@ -53,6 +53,11 @@ const (
 // RoleLeader is the only role value that may sit under the leader_ref member.
 const RoleLeader = "leader"
 
+// RoleMember is the default role applied to a squad member whose stored role
+// is empty (legacy data), so an exported template always carries a valid,
+// non-empty member role (CLO-418).
+const RoleMember = "member"
+
 // Template is the top-level wire representation of an exported resource
 // template. It is the single contract every exporter, importer, validator and
 // CLI command operates on; nothing in the package mutates a Template in place.

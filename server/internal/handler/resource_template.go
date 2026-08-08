@@ -564,6 +564,18 @@ func (h *Handler) buildSquadSpec(ctx context.Context, wsUUID pgtype.UUID, squad 
 		if uuidToString(row.MemberID) == uuidToString(squad.LeaderID) {
 			role = resourcetmpl.RoleLeader
 		}
+		// CLO-418: legacy rows may carry an empty role (members added before
+		// role validation). A template with an empty member role would fail
+		// validation on import, so fall back to a default and warn instead of
+		// emitting an invalid template.
+		if strings.TrimSpace(role) == "" {
+			role = resourcetmpl.RoleMember
+			warnings = append(warnings, resourcetmpl.Warning{
+				Code:    "MEMBER_ROLE_DEFAULTED",
+				Path:    path,
+				Message: "member role was empty and was defaulted to " + resourcetmpl.RoleMember,
+			})
+		}
 		entries = append(entries, memberEntry{role: role, agent: memberAgent})
 		deps = append(deps, squadDependency{agent: memberAgent, name: memberAgent.Name})
 	}

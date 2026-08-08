@@ -62,6 +62,23 @@
     "upload_too_large": "ファイルが 5 MB を超えています。",
     "tweak_section": "インポート前に調整",
     "tweak_name_label": "名前",
-    "tweak_description_label": "説明"
+    "tweak_description_label": "説明",
+    "select_step_title": "インポートするテンプレートを選択",
+    "select_step_hint": "このファイルには {{count}} 個のテンプレートが含まれています。インポートするものを選択してください。",
+    "select_all": "すべて選択",
+    "select_none": "すべて解除",
+    "selected_count": "{{count}}/{{total}} 選択中",
+    "continue": "続行",
+    "trust_title": "信頼されていないテンプレートファイル",
+    "trust_body": "このファイルは現在のワークスペースからエクスポートされたものではありません（{{count}} 個のテンプレート）。インポートするとこのワークスペースにリソースが作成されます。作成者を信頼できる場合のみ続行してください。",
+    "trust_confirm_label": "このファイルを信頼してインポートする",
+    "trust_continue": "確認へ進む",
+    "conflict_fail_hint": "名前の競合があります — 続行するには rename または skip を選択するか、ファイルを修正してください。",
+    "conflict_ack": "{{count}} 件の名前の競合が {{policy}} で解決されることを理解しています。",
+    "redacted_rebind": "インポート後にこの値を再設定してください",
+    "redacted_note": "マスク済みの認証情報を含む",
+    "missing_skills_hint": "対象ランタイムに以下のスキルがありません。チェックしたものは適用前に自動インストールされ、チェックしないものは後で手動インストールします。",
+    "skill_select_all": "すべてインストールを選択",
+    "skill_remaining_section": "インポート後にインストールが必要なスキル"
   }
 }

@@ -62,6 +62,23 @@
     "upload_too_large": "文件超过 5 MB。",
     "tweak_section": "导入前调整",
     "tweak_name_label": "名称",
-    "tweak_description_label": "描述"
+    "tweak_description_label": "描述",
+    "select_step_title": "选择要导入的模板",
+    "select_step_hint": "文件包含 {{count}} 个模板，请选择要导入的模板。",
+    "select_all": "全选",
+    "select_none": "全不选",
+    "selected_count": "已选 {{count}}/{{total}}",
+    "continue": "继续",
+    "trust_title": "未受信任的模板文件",
+    "trust_body": "该文件并非从当前工作空间导出（共 {{count}} 个模板）。导入将在本工作空间创建资源——请仅在信任文件作者时继续。",
+    "trust_confirm_label": "我信任此文件并希望导入",
+    "trust_continue": "继续检查",
+    "conflict_fail_hint": "存在同名冲突——请选择 rename 或 skip 以继续，或返回修改文件。",
+    "conflict_ack": "我已知晓 {{count}} 个同名冲突将按 {{policy}} 处理。",
+    "redacted_rebind": "导入后需重新绑定该值",
+    "redacted_note": "包含已脱敏的凭据",
+    "missing_skills_hint": "目标运行环境缺少以下 skill。勾选的将在应用前自动安装；未勾选的请在导入后手动安装。",
+    "skill_select_all": "全部勾选安装",
+    "skill_remaining_section": "导入后需手动安装的 skill"
   }
 }

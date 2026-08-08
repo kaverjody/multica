@@ -75,15 +75,16 @@ export async function exportAndDownload(
       single.response.template,
     );
   } else if (exported.length > 1) {
-    // All targets share one kind per call site (agents page vs squads page).
-    const kind = exported[0]!.target.kind;
+    // PM decision Q1 (CLO-400): bundle files carry kind:"bundle" with the
+    // templates array, so an import can tell a bundle from a single doc and
+    // offer the per-template selection substep.
     const bundle = {
+      kind: "bundle",
       schema_version: "multica-template-bundle/v1",
-      items: exported.map((e) => e.response.template),
-      count: exported.length,
+      templates: exported.map((e) => e.response.template),
     };
     triggerDownload(
-      `multica-${kind}s-bundle-${exported.length}-${stamp}.json`,
+      `multica-${exported[0]!.target.kind}s-bundle-${exported.length}-${stamp}.json`,
       bundle,
     );
   }
@@ -126,16 +127,24 @@ function triggerDownload(filename: string, payload: unknown): void {
 
 /**
  * Normalises whatever the user uploaded into a list of template documents.
- * Accepts a bare template object, an array of templates, or the bundle shape
- * produced by {@link exportAndDownload} (`schema_version` + `items`/`count`;
- * the earlier `templates` key is accepted for backwards compatibility).
- * Throws on non-object / empty input.
+ * Accepts a bare template object, an array of templates, or a bundle — both
+ * the current shape (`kind: "bundle"` + `templates`, PM decision Q1) and the
+ * earlier `{ schema_version, items|templates }` shape for backwards
+ * compatibility. Throws on non-object / empty input.
  */
 export function parseUploadedTemplates(raw: unknown): ResourceTemplateDoc[] {
   if (raw === null || typeof raw !== "object") {
     throw new Error("file contents are not a JSON object");
   }
   const candidate = raw as Record<string, unknown>;
+  // Bundle shape (Q1): { kind: "bundle", templates: [...] }.
+  if (candidate.kind === "bundle" && Array.isArray(candidate.templates)) {
+    const list = candidate.templates as unknown[];
+    if (list.length === 0) throw new Error("bundle contains no templates");
+    return list as ResourceTemplateDoc[];
+  }
+  // Legacy bundle shape: { schema_version: "multica-template-bundle/...",
+  // items|templates: [...] }.
   if (
     typeof candidate.schema_version === "string" &&
     candidate.schema_version.startsWith("multica-template-bundle/")

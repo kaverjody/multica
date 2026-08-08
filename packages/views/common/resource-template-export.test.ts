@@ -51,7 +51,16 @@ describe("parseUploadedTemplates", () => {
     expect(parseUploadedTemplates(list)).toEqual(list);
   });
 
-  it("accepts the bundle shape (items + count)", () => {
+  it("accepts the Q1 bundle shape (kind: bundle + templates)", () => {
+    const bundle = {
+      kind: "bundle",
+      schema_version: "multica-template-bundle/v1",
+      templates: [{ schema_version: "1.0", kind: "agent" }],
+    };
+    expect(parseUploadedTemplates(bundle)).toEqual(bundle.templates);
+  });
+
+  it("accepts the legacy bundle shape (items + count)", () => {
     const bundle = {
       schema_version: "multica-template-bundle/v1",
       items: [{ schema_version: "1.0", kind: "agent" }],
@@ -60,7 +69,7 @@ describe("parseUploadedTemplates", () => {
     expect(parseUploadedTemplates(bundle)).toEqual(bundle.items);
   });
 
-  it("accepts the legacy bundle shape (templates key)", () => {
+  it("accepts the legacy bundle shape (schema_version + templates key)", () => {
     const bundle = {
       schema_version: "multica-template-bundle/v1",
       templates: [{ schema_version: "1.0", kind: "agent" }],
@@ -138,9 +147,9 @@ describe("exportAndDownload", () => {
     expect(anchor.download).toMatch(/^multica-agents-bundle-2-\d{8}-\d{4}\.json$/);
     const blob = payloads[0] as Blob;
     const bundle = JSON.parse(await blob.text()) as Record<string, unknown>;
+    expect(bundle.kind).toBe("bundle");
     expect(bundle.schema_version).toBe("multica-template-bundle/v1");
-    expect(bundle.count).toBe(2);
-    expect((bundle.items as unknown[]).length).toBe(2);
+    expect((bundle.templates as unknown[]).length).toBe(2);
   });
 
   it("collects per-target failures without aborting the batch", async () => {

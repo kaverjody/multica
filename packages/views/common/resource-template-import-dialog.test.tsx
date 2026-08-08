@@ -44,7 +44,11 @@ const AGENT_DOC = {
   schema_version: "1.0",
   template_id: "tpl-1",
   kind: "agent",
-  metadata: { name: "My Agent", description: "A test agent" },
+  metadata: {
+    name: "My Agent",
+    description: "A test agent",
+    source_workspace: "ws-1",
+  },
   spec: {
     agent: {
       name: "My Agent",
@@ -59,7 +63,7 @@ const SQUAD_DOC = {
   schema_version: "1.0",
   template_id: "tpl-2",
   kind: "squad",
-  metadata: { name: "My Squad" },
+  metadata: { name: "My Squad", source_workspace: "ws-1" },
   spec: { squad: { name: "My Squad", members_mode: "embedded", members: [] } },
 };
 
@@ -88,7 +92,9 @@ async function uploadFile(name: string, contents: unknown) {
     type: "application/json",
   });
   fireEvent.change(input, { target: { files: [file] } });
-  await screen.findByText(/target runtime/i);
+  // The wizard may land on the trust gate, the bundle-selection substep, or
+  // the review step depending on the file; callers assert their step.
+  await waitFor(() => expect(input.files?.[0]).toBe(file));
 }
 
 describe("ResourceTemplateImportDialog", () => {
@@ -136,6 +142,7 @@ describe("ResourceTemplateImportDialog", () => {
 
     renderDialog();
     await uploadFile("agent.json", AGENT_DOC);
+    await screen.findByText(/target runtime/i);
 
     // Pick the target runtime and validate.
     fireEvent.change(screen.getByLabelText(/target runtime/i), {
@@ -176,6 +183,7 @@ describe("ResourceTemplateImportDialog", () => {
 
     renderDialog();
     await uploadFile("agent.json", AGENT_DOC);
+    await screen.findByText(/target runtime/i);
     fireEvent.change(screen.getByLabelText(/target runtime/i), {
       target: { value: "rt-1" },
     });
@@ -200,6 +208,90 @@ describe("ResourceTemplateImportDialog", () => {
     });
   });
 
+  it("requires an explicit trust confirmation for files from other workspaces", async () => {
+    const FOREIGN = {
+      schema_version: "1.0",
+      template_id: "tpl-x",
+      kind: "agent",
+      metadata: { name: "Foreign Agent", source_workspace: "ws-other" },
+      spec: { agent: { name: "Foreign Agent" } },
+    };
+    renderDialog();
+    await uploadFile("foreign.json", FOREIGN);
+
+    // Trust gate blocks the review step.
+    expect(await screen.findByText(/untrusted template file/i)).toBeInTheDocument();
+    expect(screen.queryByText(/target runtime/i)).not.toBeInTheDocument();
+
+    // Confirming proceeds into review.
+    fireEvent.click(screen.getByRole("checkbox", { name: /i trust this file/i }));
+    fireEvent.click(screen.getByRole("button", { name: /continue to review/i }));
+    expect(await screen.findByText(/target runtime/i)).toBeInTheDocument();
+  });
+
+  it("offers a template-selection substep for bundles (Q1)", async () => {
+    const bundle = {
+      kind: "bundle",
+      schema_version: "multica-template-bundle/v1",
+      templates: [
+        { ...AGENT_DOC, template_id: "tpl-1" },
+        { ...AGENT_DOC, template_id: "tpl-2", metadata: { ...AGENT_DOC.metadata, name: "Second Agent" } },
+      ],
+    };
+    renderDialog();
+    await uploadFile("bundle.json", bundle);
+
+    expect(await screen.findByText(/choose templates to import/i)).toBeInTheDocument();
+
+    // Deselect the second template, then continue.
+    fireEvent.click(screen.getAllByRole("checkbox")[1]!);
+    fireEvent.click(screen.getByRole("button", { name: /continue/i }));
+    await screen.findByText(/target runtime/i);
+
+    // Only one template reaches the review step.
+    fireEvent.change(screen.getByLabelText(/target runtime/i), { target: { value: "rt-1" } });
+    fireEvent.click(screen.getByRole("button", { name: /validate/i }));
+    await waitFor(() => expect(validateSpy).toHaveBeenCalledTimes(1));
+    expect((validateSpy.mock.calls[0]![0] as { template: { template_id: string } }).template.template_id).toBe("tpl-1");
+  });
+
+  it("requires acknowledging conflicts before apply when policy is rename", async () => {
+    validateSpy.mockResolvedValue(
+      validResponse({
+        agents_to_create: [],
+        squads_to_create: [],
+        conflicts: [
+          { kind: "agent", name: "My Agent", existing_id: "ag-0" },
+        ],
+      }),
+    );
+    applySpy.mockResolvedValue({
+      applied: true,
+      dry_run: false,
+      created: { agents: [{ ref: "My Agent", id: "ag-1", name: "My Agent-1" }], squads: [], skills: [] },
+      resource_mapping: {},
+      rolled_back: false,
+      idempotent_replay: false,
+    });
+
+    renderDialog();
+    await uploadFile("agent.json", AGENT_DOC);
+    await screen.findByText(/target runtime/i);
+    fireEvent.change(screen.getByLabelText(/target runtime/i), { target: { value: "rt-1" } });
+    fireEvent.click(screen.getByRole("button", { name: /validate/i }));
+    // The conflict badge in the plan summary and the acknowledgement label
+    // both mention "name conflicts" — anchor on the acknowledgement text.
+    await screen.findByText(/i understand 1 name conflicts/i);
+
+    // Apply stays disabled until the acknowledgement is checked.
+    const apply = screen.getByRole("button", { name: /^import$/i });
+    expect(apply).toBeDisabled();
+    fireEvent.click(screen.getByRole("checkbox", { name: /i understand 1 name conflicts/i }));
+    await waitFor(() => expect(apply).toBeEnabled());
+    fireEvent.click(apply);
+    await waitFor(() => expect(applySpy).toHaveBeenCalledTimes(1));
+  });
+
   it("passes members_mode for squad templates and blocks apply on validate errors", async () => {
     validateSpy.mockResolvedValue({
       valid: false,
@@ -211,6 +303,7 @@ describe("ResourceTemplateImportDialog", () => {
 
     renderDialog();
     await uploadFile("squad.json", SQUAD_DOC);
+    await screen.findByText(/target runtime/i);
     fireEvent.change(screen.getByLabelText(/target runtime/i), {
       target: { value: "rt-1" },
     });

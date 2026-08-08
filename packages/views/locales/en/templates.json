@@ -71,6 +71,23 @@
     "upload_too_large": "That file is larger than 5 MB.",
     "tweak_section": "Adjust before importing",
     "tweak_name_label": "Name",
-    "tweak_description_label": "Description"
+    "tweak_description_label": "Description",
+    "select_step_title": "Choose templates to import",
+    "select_step_hint": "This file contains {{count}} templates. Select the ones to import.",
+    "select_all": "Select all",
+    "select_none": "Select none",
+    "selected_count": "{{count}}/{{total}} selected",
+    "continue": "Continue",
+    "trust_title": "Untrusted template file",
+    "trust_body": "This file was not exported from the current workspace ({{count}} template(s)). Importing it creates resources in this workspace — only continue if you trust the author.",
+    "trust_confirm_label": "I trust this file and want to import it",
+    "trust_continue": "Continue to review",
+    "conflict_fail_hint": "Name conflicts exist — choose rename or skip to proceed, or go back and edit the file.",
+    "conflict_ack": "I understand {{count}} name conflicts will be resolved ({{policy}}).",
+    "redacted_rebind": "Re-bind this value after import",
+    "redacted_note": "contains redacted credentials",
+    "missing_skills_hint": "These skills are missing on the target runtime. Checked ones are auto-installed before apply; unchecked ones you install manually afterwards.",
+    "skill_select_all": "Select all to install",
+    "skill_remaining_section": "Install remaining skills after import"
   }
 }

@@ -27,6 +27,9 @@ export interface ResourceTemplateDoc {
     version?: string;
     author?: { id?: string; display_name?: string };
     tags?: string[];
+    /** Workspace the template was exported from (display-only provenance;
+        drives the Web wizard's trust gate for foreign files). */
+    source_workspace?: string;
   };
   spec?: {
     agent?: {

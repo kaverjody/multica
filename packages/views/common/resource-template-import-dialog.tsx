@@ -106,8 +106,14 @@ export function ResourceTemplateImportDialog({
   const [needsTrust, setNeedsTrust] = useState(false);
   const [trustConfirmed, setTrustConfirmed] = useState(false);
   // Conflict policy != fail with live conflicts requires an explicit
-  // acknowledgement before apply (UX v1.1 "覆盖项二次确认").
+  // acknowledgement before apply (UX v1.1 "覆盖项二次确认"); the skip policy
+  // is the only one that still needs it — rename resolves conflicts through
+  // the mandatory manual name input (CLO-503).
   const [conflictAcknowledged, setConflictAcknowledged] = useState(false);
+  // CLO-503: apply-time block with a visible reason — either unresolved name
+  // conflicts, or a manually-typed new name that still collides after the
+  // pre-apply re-validation.
+  const [applyBlockError, setApplyBlockError] = useState<string | null>(null);
 
   const { data: runtimes = [] } = useQuery({
     queryKey: ["workspaces", wsId, "runtimes"],
@@ -131,6 +137,7 @@ export function ResourceTemplateImportDialog({
     setNeedsTrust(false);
     setTrustConfirmed(false);
     setConflictAcknowledged(false);
+    setApplyBlockError(null);
   }, []);
 
   const handleOpenChange = useCallback(
@@ -294,6 +301,7 @@ export function ResourceTemplateImportDialog({
 
   const validateAll = useCallback(async () => {
     if (!targetRuntimeId || entries.length === 0) return;
+    setApplyBlockError(null);
     setEntries((prev) => prev.map((e) => ({ ...e, validating: true, validate: undefined })));
     const results = await Promise.all(
       entries.map((e) =>
@@ -333,31 +341,84 @@ export function ResourceTemplateImportDialog({
     blockingErrors === 0 &&
     !applying &&
     !anyValidating &&
-    // CLO-417: fail policy + live conflicts is the default; the apply stays
-    // enabled only once the user renamed the conflicting templates (the
-    // Conflict step). rename/skip are the explicit alternatives.
+    // CLO-503: with live conflicts, every conflicting template must be
+    // manually renamed to a value different from the original (fail and
+    // rename policies alike); skip is the only policy that proceeds without
+    // a new name. The wizard never asks the backend to auto-rename.
     (aggregatedConflicts.length === 0 ||
-      conflictPolicy !== "fail" ||
+      conflictPolicy === "skip" ||
       conflictResolvedByRename) &&
-    // "overwrite-type" resolutions (rename/skip) need explicit acknowledgement
-    // when conflicts actually exist (UX v1.1 second-confirm).
-    (aggregatedConflicts.length === 0 || conflictPolicy === "fail" || conflictAcknowledged);
+    // The explicit acknowledgement is only meaningful for skip now — rename
+    // is confirmed by the mandatory manual rename itself (CLO-503).
+    (aggregatedConflicts.length === 0 ||
+      conflictPolicy === "fail" ||
+      conflictPolicy === "rename" ||
+      conflictAcknowledged);
 
   const doApply = useCallback(async () => {
     setApplying(true);
-    const envPayload: Record<string, Record<string, string>> = {};
-    for (const [ref, map] of Object.entries(envValues)) {
-      const filtered: Record<string, string> = {};
-      for (const [k, v] of Object.entries(map)) {
-        if (v.trim() !== "") filtered[k] = v;
-      }
-      if (Object.keys(filtered).length > 0) envPayload[ref] = filtered;
-    }
-    const installUrls = aggregatedMissingSkills
-      .filter((s) => s.installable && installSkills[s.source_url || s.name])
-      .map((s) => s.source_url);
-
+    setApplyBlockError(null);
     try {
+      // CLO-503: the backend's "rename" policy auto-suffixes the name
+      // (renamedName). The wizard resolves conflicts through manual rename
+      // only, so it never asks the backend to rename — the effective policy
+      // is "fail", which errors loudly instead of suffixing if a
+      // manually-typed new name still collides.
+      const effectivePolicy: ConflictPolicy =
+        conflictPolicy === "skip" ? "skip" : "fail";
+
+      if (effectivePolicy === "fail" && aggregatedConflicts.length > 0) {
+        // Pre-apply re-validation with the overridden names: a new name that
+        // still collides with an existing resource blocks the import with a
+        // visible reason (no silent suffix, no partial apply).
+        const renamedEntries = entries.filter((e) => {
+          const cs = e.validate?.plan.conflicts ?? [];
+          const override = e.nameOverride?.trim();
+          return cs.length > 0 && !!override && override !== displayName(e.doc);
+        });
+        const revalidated = await Promise.all(
+          renamedEntries.map(async (e) => {
+            const override = e.nameOverride!.trim();
+            const res = await api
+              .validateResourceTemplate({
+                template: withNameOverride(e.doc, override),
+                target_runtime_id: targetRuntimeId,
+                members_mode: isSquadDoc(e.doc) ? membersMode : undefined,
+              })
+              .catch(() => null);
+            if (!res) return null;
+            const stillConflicting =
+              (res.errors?.length ?? 0) > 0 ||
+              (res.plan?.conflicts?.some((c) => c.name === override) ?? false);
+            return stillConflicting ? override : null;
+          }),
+        );
+        const still = revalidated.filter(
+          (v): v is string => v !== null,
+        );
+        if (still.length > 0) {
+          setApplyBlockError(
+            t(($) => $.import.apply_blocked_new_name_conflict, {
+              count: still.length,
+              names: still.join(", "),
+            }),
+          );
+          return;
+        }
+      }
+
+      const envPayload: Record<string, Record<string, string>> = {};
+      for (const [ref, map] of Object.entries(envValues)) {
+        const filtered: Record<string, string> = {};
+        for (const [k, v] of Object.entries(map)) {
+          if (v.trim() !== "") filtered[k] = v;
+        }
+        if (Object.keys(filtered).length > 0) envPayload[ref] = filtered;
+      }
+      const installUrls = aggregatedMissingSkills
+        .filter((s) => s.installable && installSkills[s.source_url || s.name])
+        .map((s) => s.source_url);
+
       let lastResult: ApplyResourceTemplateResponse | null = null;
       for (const e of entries) {
         if ((e.validate?.errors?.length ?? 0) > 0) continue;
@@ -366,7 +427,7 @@ export function ResourceTemplateImportDialog({
           template: e.doc,
           target_runtime_id: targetRuntimeId,
           members_mode: isSquadDoc(e.doc) ? membersMode : undefined,
-          conflict_policy: conflictPolicy,
+          conflict_policy: effectivePolicy,
           overrides: overrides ?? undefined,
           env: Object.keys(envPayload).length > 0 ? envPayload : undefined,
           install_missing_skills: installUrls.length > 0 ? installUrls : undefined,
@@ -397,6 +458,7 @@ export function ResourceTemplateImportDialog({
       setApplying(false);
     }
   }, [
+    aggregatedConflicts,
     aggregatedMissingSkills,
     conflictPolicy,
     entries,
@@ -668,10 +730,43 @@ export function ResourceTemplateImportDialog({
                   </span>
                 </div>
                 {(e.validate?.plan.conflicts?.length ?? 0) > 0 && (
-                  <p className="mb-1.5 flex items-start gap-1.5 text-xs text-amber-600">
-                    <AlertCircle className="mt-0.5 size-3.5 shrink-0" />
-                    <span>{t(($) => $.import.conflict_entry_hint)}</span>
-                  </p>
+                  // CLO-503: the conflict zone itself carries the editable
+                  // new-name input — visible and prefilled with the original
+                  // name, instead of a hidden "tweak" field elsewhere.
+                  <div className="mt-1.5 space-y-1.5 rounded-md border border-amber-300 bg-amber-50 p-2">
+                    <p className="flex items-start gap-1.5 text-xs font-medium text-amber-800">
+                      <AlertCircle className="mt-0.5 size-3.5 shrink-0" />
+                      <span>
+                        {t(($) => $.import.conflict_entry_hint, {
+                          count: e.validate!.plan.conflicts!.length,
+                        })}
+                      </span>
+                    </p>
+                    <div className="space-y-1">
+                      <Label
+                        htmlFor={`conflict-name-${i}`}
+                        className="text-xs font-medium text-amber-900"
+                      >
+                        {t(($) => $.import.conflict_new_name_label)}
+                      </Label>
+                      <Input
+                        id={`conflict-name-${i}`}
+                        className="h-7 border-amber-400 bg-white text-xs"
+                        value={e.nameOverride ?? displayName(e.doc)}
+                        aria-label={t(($) => $.import.conflict_new_name_label)}
+                        onChange={(ev) => {
+                          setApplyBlockError(null);
+                          setEntries((prev) =>
+                            prev.map((p, pi) =>
+                              pi === i
+                                ? { ...p, nameOverride: ev.target.value }
+                                : p,
+                            ),
+                          );
+                        }}
+                      />
+                    </div>
+                  </div>
                 )}
                 {e.validate?.errors && e.validate.errors.length > 0 && (
                   <ul className="list-inside list-disc space-y-0.5 text-xs text-destructive">
@@ -704,28 +799,39 @@ export function ResourceTemplateImportDialog({
                   <PlanSummary plan={e.validate.plan} />
                 )}
                 {/* Pre-apply tweaks (PRD US-Import-Wizard-4): lightweight
-                    metadata only — name / description. */}
+                    metadata only — name / description. The name tweak is
+                    skipped for conflicting entries — the conflict zone above
+                    owns the new-name input (CLO-503). */}
                 {e.validate && e.validate.errors && e.validate.errors.length === 0 && (
                   <div className="mt-2 grid grid-cols-1 gap-2 sm:grid-cols-2">
-                    <div className="space-y-1">
-                      <Label htmlFor={`tweak-name-${i}`} className="text-xs text-muted-foreground">
-                        {t(($) => $.import.tweak_name_label)}
-                      </Label>
-                      <Input
-                        id={`tweak-name-${i}`}
-                        className="h-7 text-xs"
-                        defaultValue={displayName(e.doc)}
-                        placeholder={displayName(e.doc)}
-                        onChange={(ev) =>
-                          setEntries((prev) =>
-                            prev.map((p, pi) =>
-                              pi === i ? { ...p, nameOverride: ev.target.value } : p,
-                            ),
-                          )
-                        }
-                      />
-                    </div>
-                    <div className="space-y-1">
+                    {(e.validate?.plan.conflicts?.length ?? 0) === 0 && (
+                      <div className="space-y-1">
+                        <Label htmlFor={`tweak-name-${i}`} className="text-xs text-muted-foreground">
+                          {t(($) => $.import.tweak_name_label)}
+                        </Label>
+                        <Input
+                          id={`tweak-name-${i}`}
+                          className="h-7 text-xs"
+                          defaultValue={displayName(e.doc)}
+                          placeholder={displayName(e.doc)}
+                          onChange={(ev) => {
+                            setApplyBlockError(null);
+                            setEntries((prev) =>
+                              prev.map((p, pi) =>
+                                pi === i ? { ...p, nameOverride: ev.target.value } : p,
+                              ),
+                            );
+                          }}
+                        />
+                      </div>
+                    )}
+                    <div
+                      className={`space-y-1 ${
+                        (e.validate?.plan.conflicts?.length ?? 0) > 0
+                          ? "sm:col-span-2"
+                          : ""
+                      }`}
+                    >
                       <Label htmlFor={`tweak-desc-${i}`} className="text-xs text-muted-foreground">
                         {t(($) => $.import.tweak_description_label)}
                       </Label>
@@ -757,6 +863,7 @@ export function ResourceTemplateImportDialog({
                   onValueChange={(v) => {
                     setConflictPolicy(v as ConflictPolicy);
                     setConflictAcknowledged(false);
+                    setApplyBlockError(null);
                   }}
                   className="space-y-1.5"
                 >
@@ -765,9 +872,24 @@ export function ResourceTemplateImportDialog({
                   <ConflictPolicyOption value="skip" />
                 </RadioGroup>
                 {conflictPolicy === "fail" ? (
+                  // CLO-503: the fail policy must state why the import is
+                  // blocked — a plain disabled button reads as "not working".
                   <p className="flex items-start gap-2 text-xs text-destructive">
                     <AlertCircle className="mt-0.5 size-3.5 shrink-0" />
-                    <span>{t(($) => $.import.conflict_fail_hint)}</span>
+                    <span>
+                      {t(($) => $.import.conflict_fail_hint, {
+                        count: aggregatedConflicts.length,
+                      })}
+                    </span>
+                  </p>
+                ) : conflictPolicy === "rename" ? (
+                  <p className="flex items-start gap-2 text-xs text-amber-600">
+                    <AlertCircle className="mt-0.5 size-3.5 shrink-0" />
+                    <span>
+                      {t(($) => $.import.conflict_rename_hint, {
+                        count: aggregatedConflicts.length,
+                      })}
+                    </span>
                   </p>
                 ) : (
                   <label className="flex cursor-pointer items-start gap-2 text-xs text-muted-foreground">
@@ -785,6 +907,38 @@ export function ResourceTemplateImportDialog({
                   </label>
                 )}
               </div>
+            )}
+
+            {/* CLO-503: visible reasons for a disabled import button —
+                unresolved name conflicts, an un-acknowledged skip, or a
+                re-validation failure on a manually-typed new name. */}
+            {allValidated &&
+              aggregatedConflicts.length > 0 &&
+              conflictPolicy !== "skip" &&
+              !conflictResolvedByRename && (
+                <p className="flex items-start gap-2 text-xs text-destructive">
+                  <AlertCircle className="mt-0.5 size-3.5 shrink-0" />
+                  <span>
+                    {t(($) => $.import.apply_blocked_conflicts, {
+                      count: aggregatedConflicts.length,
+                    })}
+                  </span>
+                </p>
+              )}
+            {allValidated &&
+              conflictPolicy === "skip" &&
+              aggregatedConflicts.length > 0 &&
+              !conflictAcknowledged && (
+                <p className="flex items-start gap-2 text-xs text-destructive">
+                  <AlertCircle className="mt-0.5 size-3.5 shrink-0" />
+                  <span>{t(($) => $.import.conflict_ack_required)}</span>
+                </p>
+              )}
+            {applyBlockError && (
+              <p className="flex items-start gap-2 text-sm text-destructive">
+                <AlertCircle className="mt-0.5 size-4 shrink-0" />
+                <span>{applyBlockError}</span>
+              </p>
             )}
 
             {/* Required env keys */}
@@ -991,6 +1145,35 @@ function buildOverrides(e: TemplateEntry): ApplyResourceTemplateRequest["overrid
 
 function isSquadDoc(doc: ResourceTemplateDoc): boolean {
   return doc.kind === "squad";
+}
+
+/**
+ * Returns a copy of the template doc with the top-level name overridden in
+ * both metadata and spec. Used for the CLO-503 pre-apply re-validation: the
+ * backend derives plan.conflicts from the doc name it receives, so validating
+ * with the override applied tells us whether the manually-typed new name is
+ * still taken in the workspace.
+ */
+function withNameOverride(
+  doc: ResourceTemplateDoc,
+  name: string,
+): ResourceTemplateDoc {
+  const metadata = doc.metadata ? { ...doc.metadata, name } : { name };
+  if (doc.kind === "squad" && doc.spec?.squad) {
+    return {
+      ...doc,
+      metadata,
+      spec: { ...doc.spec, squad: { ...doc.spec.squad, name } },
+    };
+  }
+  if (doc.spec?.agent) {
+    return {
+      ...doc,
+      metadata,
+      spec: { ...doc.spec, agent: { ...doc.spec.agent, name } },
+    };
+  }
+  return { ...doc, metadata };
 }
 
 /** The template's own members_mode, when it is a valid squad mode. */

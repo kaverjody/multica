@@ -255,7 +255,36 @@ describe("ResourceTemplateImportDialog", () => {
     expect((validateSpy.mock.calls[0]![0] as { template: { template_id: string } }).template.template_id).toBe("tpl-1");
   });
 
-  it("blocks apply under the default fail policy until the conflicting name is edited, then imports (CLO-417)", async () => {
+  it("fail policy: conflict zone shows the new-name input and a visible blocked reason (CLO-503)", async () => {
+    validateSpy.mockResolvedValue(
+      validResponse({
+        agents_to_create: [],
+        squads_to_create: [],
+        conflicts: [
+          { kind: "agent", name: "My Agent", existing_id: "ag-0" },
+        ],
+      }),
+    );
+
+    renderDialog();
+    await uploadFile("agent.json", AGENT_DOC);
+    await screen.findByText(/target runtime/i);
+    fireEvent.change(screen.getByLabelText(/target runtime/i), { target: { value: "rt-1" } });
+    fireEvent.click(screen.getByRole("button", { name: /validate/i }));
+
+    // The conflict zone itself carries the editable new-name input, prefilled
+    // with the original name (no hidden "tweak" field).
+    await screen.findByText(/conflicts with 1 existing resource/i);
+    const nameInput = screen.getByLabelText(/^new name$/i) as HTMLInputElement;
+    expect(nameInput.value).toBe("My Agent");
+
+    // The fail policy states why the import button is disabled.
+    expect(screen.getByText(/1 name conflict\(s\) block the import/i)).toBeInTheDocument();
+    expect(screen.getByText(/1 unresolved name conflicts/i)).toBeInTheDocument();
+    expect(screen.getByRole("button", { name: /^import$/i })).toBeDisabled();
+  });
+
+  it("fail policy: editing the new name resolves the conflict and applies with the override (CLO-417/503)", async () => {
     validateSpy.mockResolvedValue(
       validResponse({
         agents_to_create: [],
@@ -279,27 +308,33 @@ describe("ResourceTemplateImportDialog", () => {
     await screen.findByText(/target runtime/i);
     fireEvent.change(screen.getByLabelText(/target runtime/i), { target: { value: "rt-1" } });
     fireEvent.click(screen.getByRole("button", { name: /validate/i }));
-    // The conflict is surfaced on the entry card.
-    await screen.findByText(/This template has a name conflict/i);
+    await screen.findByText(/conflicts with 1 existing resource/i);
 
     // Default policy is fail, and the apply stays disabled until the name is
     // edited to a non-conflicting value.
     const apply = screen.getByRole("button", { name: /^import$/i });
     expect(apply).toBeDisabled();
 
-    // Renaming the template in the review step resolves the conflict.
-    fireEvent.change(screen.getByLabelText(/^name$/i), {
+    // Renaming via the conflict-zone input resolves the conflict.
+    fireEvent.change(screen.getByLabelText(/^new name$/i), {
       target: { value: "My Agent-renamed" },
     });
     await waitFor(() => expect(apply).toBeEnabled());
     fireEvent.click(apply);
     await waitFor(() => expect(applySpy).toHaveBeenCalledTimes(1));
+
+    // The pre-apply re-validation ran with the overridden name.
+    const revalidated = validateSpy.mock.calls.at(-1)![0] as {
+      template: { metadata: { name: string } };
+    };
+    expect(revalidated.template.metadata.name).toBe("My Agent-renamed");
+
     const applyReq = applySpy.mock.calls[0]![0] as Record<string, unknown>;
     expect(applyReq.conflict_policy).toBe("fail");
     expect((applyReq.overrides as { name?: string }).name).toBe("My Agent-renamed");
   });
 
-  it("requires acknowledging conflicts before apply when policy is switchable to rename", async () => {
+  it("rename policy: requires a manually typed new name and never sends conflict_policy=rename (CLO-503)", async () => {
     validateSpy.mockResolvedValue(
       validResponse({
         agents_to_create: [],
@@ -312,7 +347,7 @@ describe("ResourceTemplateImportDialog", () => {
     applySpy.mockResolvedValue({
       applied: true,
       dry_run: false,
-      created: { agents: [{ ref: "My Agent", id: "ag-1", name: "My Agent-1" }], squads: [], skills: [] },
+      created: { agents: [{ ref: "My Agent", id: "ag-1", name: "My Agent-renamed" }], squads: [], skills: [] },
       resource_mapping: {},
       rolled_back: false,
       idempotent_replay: false,
@@ -323,20 +358,112 @@ describe("ResourceTemplateImportDialog", () => {
     await screen.findByText(/target runtime/i);
     fireEvent.change(screen.getByLabelText(/target runtime/i), { target: { value: "rt-1" } });
     fireEvent.click(screen.getByRole("button", { name: /validate/i }));
-    await screen.findByText(/This template has a name conflict/i);
+    await screen.findByText(/conflicts with 1 existing resource/i);
 
-    // Switch to the explicit rename policy — the ack then gates the apply.
-    fireEvent.click(
-      screen.getAllByLabelText(/create with a new name/i)[0]!,
-    );
+    // Switch to the rename policy: the ack checkbox is gone — the manual
+    // rename is the confirmation. Without a new name the apply stays disabled.
+    fireEvent.click(screen.getAllByLabelText(/create with a new name/i)[0]!);
     const apply = screen.getByRole("button", { name: /^import$/i });
     expect(apply).toBeDisabled();
-    fireEvent.click(screen.getByRole("checkbox", { name: /i understand 1 name conflicts/i }));
+    expect(screen.queryByLabelText(/i understand/i)).not.toBeInTheDocument();
+
+    // Typing a different name in the conflict zone enables the import.
+    fireEvent.change(screen.getByLabelText(/^new name$/i), {
+      target: { value: "My Agent-renamed" },
+    });
+    await waitFor(() => expect(apply).toBeEnabled());
+    fireEvent.click(apply);
+    await waitFor(() => expect(applySpy).toHaveBeenCalledTimes(1));
+
+    // The wizard never asks the backend to auto-rename: effective policy is
+    // fail and the manual name travels as an override.
+    const applyReq = applySpy.mock.calls[0]![0] as Record<string, unknown>;
+    expect(applyReq.conflict_policy).toBe("fail");
+    expect((applyReq.overrides as { name?: string }).name).toBe("My Agent-renamed");
+  });
+
+  it("rename policy: blocks apply when the typed new name still conflicts — no auto suffix (CLO-503)", async () => {
+    // First validation reports the original name as conflicting; the
+    // pre-apply re-validation (with the override applied) reports the NEW
+    // name as still taken.
+    validateSpy.mockImplementation(
+      async (req: Record<string, unknown>) => {
+        const template = req.template as { metadata: { name: string } };
+        const name = template.metadata.name;
+        return validResponse({
+          agents_to_create: [],
+          squads_to_create: [],
+          conflicts:
+            name === "My Agent-renamed"
+              ? [{ kind: "agent", name: "My Agent-renamed", existing_id: "ag-9" }]
+              : [{ kind: "agent", name: "My Agent", existing_id: "ag-0" }],
+        });
+      },
+    );
+
+    renderDialog();
+    await uploadFile("agent.json", AGENT_DOC);
+    await screen.findByText(/target runtime/i);
+    fireEvent.change(screen.getByLabelText(/target runtime/i), { target: { value: "rt-1" } });
+    fireEvent.click(screen.getByRole("button", { name: /validate/i }));
+    await screen.findByText(/conflicts with 1 existing resource/i);
+
+    fireEvent.click(screen.getAllByLabelText(/create with a new name/i)[0]!);
+    fireEvent.change(screen.getByLabelText(/^new name$/i), {
+      target: { value: "My Agent-renamed" },
+    });
+    const apply = screen.getByRole("button", { name: /^import$/i });
+    await waitFor(() => expect(apply).toBeEnabled());
+
+    fireEvent.click(apply);
+
+    // The import is blocked with a visible reason and apply is never called —
+    // the backend would have auto-suffixed this name under the rename policy.
+    expect(await screen.findByText(/still conflicts with an existing resource/i)).toBeInTheDocument();
+    expect(applySpy).not.toHaveBeenCalled();
+  });
+
+  it("skip policy: requires the acknowledgement and applies with conflict_policy=skip", async () => {
+    validateSpy.mockResolvedValue(
+      validResponse({
+        agents_to_create: [],
+        squads_to_create: [],
+        conflicts: [
+          { kind: "agent", name: "My Agent", existing_id: "ag-0" },
+        ],
+      }),
+    );
+    applySpy.mockResolvedValue({
+      applied: true,
+      dry_run: false,
+      created: { agents: [], squads: [], skills: [] },
+      resource_mapping: {},
+      skipped: [{ kind: "agent", name: "My Agent", reason: "name_conflict" }],
+      rolled_back: false,
+      idempotent_replay: false,
+    });
+
+    renderDialog();
+    await uploadFile("agent.json", AGENT_DOC);
+    await screen.findByText(/target runtime/i);
+    fireEvent.change(screen.getByLabelText(/target runtime/i), { target: { value: "rt-1" } });
+    fireEvent.click(screen.getByRole("button", { name: /validate/i }));
+    await screen.findByText(/conflicts with 1 existing resource/i);
+
+    // Skip needs no new name, but the explicit acknowledgement gates the apply.
+    fireEvent.click(screen.getAllByLabelText(/skip and keep the existing one/i)[0]!);
+    const apply = screen.getByRole("button", { name: /^import$/i });
+    expect(apply).toBeDisabled();
+    expect(screen.getByText(/confirm the skip to enable import/i)).toBeInTheDocument();
+
+    fireEvent.click(
+      screen.getByRole("checkbox", { name: /i understand 1/i }),
+    );
     await waitFor(() => expect(apply).toBeEnabled());
     fireEvent.click(apply);
     await waitFor(() => expect(applySpy).toHaveBeenCalledTimes(1));
     const applyReq = applySpy.mock.calls[0]![0] as Record<string, unknown>;
-    expect(applyReq.conflict_policy).toBe("rename");
+    expect(applyReq.conflict_policy).toBe("skip");
   });
 
   it("passes members_mode for squad templates and blocks apply on validate errors", async () => {

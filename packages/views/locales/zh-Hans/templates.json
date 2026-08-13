@@ -75,6 +75,7 @@
     "trust_continue": "继续检查",
     "conflict_fail_hint": "存在 {{count}} 个同名冲突，无法导入。请在下方为每个冲突项输入新名称，或改用其他策略。",
     "conflict_entry_hint": "该模板与 {{count}} 个现有资源同名冲突——请在下方输入新名称解决。",
+    "conflict_member_new_name_label": "成员 {{name}} 的新名称",
     "conflict_new_name_label": "新名称",
     "conflict_rename_hint": "有 {{count}} 个冲突项需要新名称。请在每个高亮的名称栏中输入不同的名字——输入完成前无法导入。",
     "apply_blocked_conflicts": "存在 {{count}} 个未解决的名称冲突——请为每个冲突项输入新名称（或改用其他策略）后再导入。",

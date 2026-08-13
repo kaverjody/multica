@@ -75,6 +75,7 @@
     "trust_continue": "確認へ進む",
     "conflict_fail_hint": "名前の競合が {{count}} 件あるため、インポートできません。競合するテンプレートごとに新しい名前を入力するか、別のポリシーを選択してください。",
     "conflict_entry_hint": "このテンプレートは既存リソースと {{count}} 件の名前が競合しています — 下の入力欄に新しい名前を入力してください。",
+    "conflict_member_new_name_label": "メンバー {{name}} の新しい名前",
     "conflict_new_name_label": "新しい名前",
     "conflict_rename_hint": "競合するテンプレートが {{count}} 件あります。ハイライトされた名前欄にそれぞれ異なる名前を入力してください — 入力するまでインポートできません。",
     "apply_blocked_conflicts": "未解決の名前の競合が {{count}} 件あります。競合するテンプレートに新しい名前を入力してからインポートしてください。",

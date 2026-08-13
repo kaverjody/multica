@@ -7,10 +7,12 @@ import { api } from "@multica/core/api";
 import { useWorkspaceId } from "@multica/core/hooks";
 import { workspaceKeys } from "@multica/core/workspace/queries";
 import type {
+  AgentOverride,
   AgentRuntime,
   ApplyResourceTemplateRequest,
   ApplyResourceTemplateResponse,
   ConflictPolicy,
+  NameConflict,
   ResourceTemplateDoc,
   TemplateMembersMode,
   ValidateResourceTemplateResponse,
@@ -57,6 +59,11 @@ interface TemplateEntry {
       instructions / model / skills / env stay read-only in v1. */
   nameOverride?: string;
   descriptionOverride?: string;
+  /** Per-member new-name overrides for squad templates (CLO-503 round 2),
+      keyed by the template's member ref (spec.squad.members[].ref). Only
+      conflicting members get an input in the UI, so only they can appear
+      here. */
+  memberNameOverrides?: Record<string, string>;
 }
 
 /**
@@ -274,19 +281,53 @@ export function ResourceTemplateImportDialog({
     [entries],
   );
 
-  // CLO-417: with the default fail policy, the user resolves a name conflict by
-  // editing the name in the review step (nameOverride), then confirming — the
-  // apply is only enabled once every conflicting template has been renamed to a
+  // CLO-417/503: with the default fail policy, the user resolves a name
+  // conflict by editing the name in the review step — the apply is only
+  // enabled once EVERY conflicting name has been manually changed to a
   // non-conflicting value. rename/skip remain explicit opt-in policies.
+  // Round 2 (CLO-503): squad templates may carry member-agent conflicts
+  // (plan.conflicts entries with kind "agent" alongside the squad's own
+  // kind "squad" entry) — each of them is resolved through its own
+  // per-member new-name input, keyed by the member ref.
   const conflictResolvedByRename = useMemo(() => {
     if (aggregatedConflicts.length === 0) return true;
     return entries.every((e) => {
       const cs = e.validate?.plan.conflicts ?? [];
       if (cs.length === 0) return true;
-      const original = displayName(e.doc);
-      const override = e.nameOverride?.trim();
-      return !!override && override !== original;
+      return cs.every((c) => {
+        if (isMemberConflict(e, c)) {
+          const ref = memberRefForAgentName(e.doc, c.name);
+          if (!ref) return false;
+          const override = e.memberNameOverrides?.[ref]?.trim();
+          return !!override && override !== c.name;
+        }
+        const original = displayName(e.doc);
+        const override = e.nameOverride?.trim();
+        return !!override && override !== original;
+      });
     });
+  }, [entries, aggregatedConflicts]);
+
+  // CLO-503: how many conflicting names still need a manual rename — drives
+  // the visible "N unresolved conflicts" blocked-apply reason.
+  const unresolvedConflictCount = useMemo(() => {
+    if (aggregatedConflicts.length === 0) return 0;
+    let n = 0;
+    for (const e of entries) {
+      const cs = e.validate?.plan.conflicts ?? [];
+      for (const c of cs) {
+        if (isMemberConflict(e, c)) {
+          const ref = memberRefForAgentName(e.doc, c.name);
+          const override = ref ? e.memberNameOverrides?.[ref]?.trim() : undefined;
+          if (!override || override === c.name) n += 1;
+        } else {
+          const original = displayName(e.doc);
+          const override = e.nameOverride?.trim();
+          if (!override || override === original) n += 1;
+        }
+      }
+    }
+    return n;
   }, [entries, aggregatedConflicts]);
 
   // Q4: skills the user did NOT opt into installing — surfaced as a
@@ -368,20 +409,38 @@ export function ResourceTemplateImportDialog({
         conflictPolicy === "skip" ? "skip" : "fail";
 
       if (effectivePolicy === "fail" && aggregatedConflicts.length > 0) {
-        // Pre-apply re-validation with the overridden names: a new name that
-        // still collides with an existing resource blocks the import with a
-        // visible reason (no silent suffix, no partial apply).
+        // Pre-apply re-validation with the overridden names (top-level AND
+        // squad member renames): a new name that still collides with an
+        // existing resource blocks the import with a visible reason (no
+        // silent suffix, no partial apply).
         const renamedEntries = entries.filter((e) => {
           const cs = e.validate?.plan.conflicts ?? [];
-          const override = e.nameOverride?.trim();
-          return cs.length > 0 && !!override && override !== displayName(e.doc);
+          if (cs.length === 0) return false;
+          const topLevelChanged =
+            !!e.nameOverride?.trim() &&
+            e.nameOverride.trim() !== displayName(e.doc);
+          const memberChanged = memberRenameCount(e) > 0;
+          return topLevelChanged || memberChanged;
         });
         const revalidated = await Promise.all(
           renamedEntries.map(async (e) => {
-            const override = e.nameOverride!.trim();
+            const typedNames: string[] = [];
+            const topLevel = e.nameOverride?.trim();
+            if (topLevel && topLevel !== displayName(e.doc)) {
+              typedNames.push(topLevel);
+            }
+            for (const [ref, value] of Object.entries(
+              e.memberNameOverrides ?? {},
+            )) {
+              const original = memberAgentNameForRef(e.doc, ref);
+              const override = value.trim();
+              if (override && override !== original) {
+                typedNames.push(override);
+              }
+            }
             const res = await api
               .validateResourceTemplate({
-                template: withNameOverride(e.doc, override),
+                template: withNameOverrides(e.doc, topLevel, e.memberNameOverrides),
                 target_runtime_id: targetRuntimeId,
                 members_mode: isSquadDoc(e.doc) ? membersMode : undefined,
               })
@@ -389,8 +448,9 @@ export function ResourceTemplateImportDialog({
             if (!res) return null;
             const stillConflicting =
               (res.errors?.length ?? 0) > 0 ||
-              (res.plan?.conflicts?.some((c) => c.name === override) ?? false);
-            return stillConflicting ? override : null;
+              (res.plan?.conflicts?.some((c) => typedNames.includes(c.name)) ??
+                false);
+            return stillConflicting ? typedNames.join(", ") : null;
           }),
         );
         const still = revalidated.filter(
@@ -731,8 +791,12 @@ export function ResourceTemplateImportDialog({
                 </div>
                 {(e.validate?.plan.conflicts?.length ?? 0) > 0 && (
                   // CLO-503: the conflict zone itself carries the editable
-                  // new-name input — visible and prefilled with the original
-                  // name, instead of a hidden "tweak" field elsewhere.
+                  // new-name input(s) — visible and prefilled with the
+                  // original name, instead of a hidden "tweak" field
+                  // elsewhere. Round 2: squad templates also render one
+                  // input per member-agent conflict (kind "agent"),
+                  // labelled with the member's name, so every conflicting
+                  // name can be manually renamed.
                   <div className="mt-1.5 space-y-1.5 rounded-md border border-amber-300 bg-amber-50 p-2">
                     <p className="flex items-start gap-1.5 text-xs font-medium text-amber-800">
                       <AlertCircle className="mt-0.5 size-3.5 shrink-0" />
@@ -766,6 +830,47 @@ export function ResourceTemplateImportDialog({
                         }}
                       />
                     </div>
+                    {memberConflicts(e).map((c) => {
+                      const ref = memberRefForAgentName(e.doc, c.name);
+                      if (!ref) return null;
+                      return (
+                        <div key={ref} className="space-y-1">
+                          <Label
+                            htmlFor={`conflict-member-name-${i}-${ref}`}
+                            className="text-xs font-medium text-amber-900"
+                          >
+                            {t(($) => $.import.conflict_member_new_name_label, {
+                              name: c.name,
+                            })}
+                          </Label>
+                          <Input
+                            id={`conflict-member-name-${i}-${ref}`}
+                            className="h-7 border-amber-400 bg-white text-xs"
+                            value={e.memberNameOverrides?.[ref] ?? c.name}
+                            aria-label={t(
+                              ($) => $.import.conflict_member_new_name_label,
+                              { name: c.name },
+                            )}
+                            onChange={(ev) => {
+                              setApplyBlockError(null);
+                              setEntries((prev) =>
+                                prev.map((p, pi) =>
+                                  pi === i
+                                    ? {
+                                        ...p,
+                                        memberNameOverrides: {
+                                          ...(p.memberNameOverrides ?? {}),
+                                          [ref]: ev.target.value,
+                                        },
+                                      }
+                                    : p,
+                                ),
+                              );
+                            }}
+                          />
+                        </div>
+                      );
+                    })}
                   </div>
                 )}
                 {e.validate?.errors && e.validate.errors.length > 0 && (
@@ -920,7 +1025,7 @@ export function ResourceTemplateImportDialog({
                   <AlertCircle className="mt-0.5 size-3.5 shrink-0" />
                   <span>
                     {t(($) => $.import.apply_blocked_conflicts, {
-                      count: aggregatedConflicts.length,
+                      count: unresolvedConflictCount,
                     })}
                   </span>
                 </p>
@@ -1122,10 +1227,11 @@ function displayName(doc: ResourceTemplateDoc): string {
 
 /**
  * Maps the wizard's editable name/description fields onto the apply
- * request's top-level overrides (the CLO-245 handler applies them to the
- * materialised agent or squad; the member-agent map stays untouched).
- * Returns undefined when nothing was edited, so the request carries no
- * overrides at all.
+ * request's overrides: the top-level name/description act on the template's
+ * own resource; squad member renames (CLO-503 round 2) travel as
+ * overrides.agents[<ref>].name — the backend consumes them per member in its
+ * conflict-resolution pass (server resource_template.go). Returns undefined
+ * when nothing was edited, so the request carries no overrides at all.
  */
 function buildOverrides(e: TemplateEntry): ApplyResourceTemplateRequest["overrides"] {
   const name = e.nameOverride?.trim();
@@ -1136,11 +1242,75 @@ function buildOverrides(e: TemplateEntry): ApplyResourceTemplateRequest["overrid
     name !== (e.doc.metadata?.name ?? e.doc.spec?.agent?.name ?? e.doc.spec?.squad?.name);
   const descriptionChanged =
     description !== undefined && description !== e.doc.metadata?.description;
-  if (!nameChanged && !descriptionChanged) return undefined;
+
+  const memberOverrides: Record<string, AgentOverride> = {};
+  if (isSquadDoc(e.doc)) {
+    for (const mem of e.doc.spec?.squad?.members ?? []) {
+      const ref = mem.ref;
+      if (!ref) continue;
+      const original = mem.agent?.name ?? "";
+      const override = e.memberNameOverrides?.[ref]?.trim();
+      if (override && override !== original) {
+        memberOverrides[ref] = { name: override };
+      }
+    }
+  }
+  const agentsChanged = Object.keys(memberOverrides).length > 0;
+
+  if (!nameChanged && !descriptionChanged && !agentsChanged) return undefined;
   return {
     ...(nameChanged ? { name } : {}),
     ...(descriptionChanged ? { description } : {}),
+    ...(agentsChanged ? { agents: memberOverrides } : {}),
   };
+}
+
+/** True when a plan conflict targets a squad's member agent (kind "agent"
+    on a squad template — the squad's own conflict is kind "squad"). */
+function isMemberConflict(e: TemplateEntry, c: NameConflict): boolean {
+  return isSquadDoc(e.doc) && c.kind === "agent";
+}
+
+/** Member-agent conflicts of a squad entry, in template member order. */
+function memberConflicts(e: TemplateEntry): NameConflict[] {
+  const cs = e.validate?.plan.conflicts ?? [];
+  if (!isSquadDoc(e.doc)) return [];
+  return cs.filter((c) => c.kind === "agent");
+}
+
+/** The member ref whose agent name equals `name`, or undefined. */
+function memberRefForAgentName(
+  doc: ResourceTemplateDoc,
+  name: string,
+): string | undefined {
+  for (const mem of doc.spec?.squad?.members ?? []) {
+    if (mem.agent?.name === name && mem.ref) return mem.ref;
+  }
+  return undefined;
+}
+
+/** The member's original agent name for a ref ("" when unknown). */
+function memberAgentNameForRef(
+  doc: ResourceTemplateDoc,
+  ref: string,
+): string {
+  for (const mem of doc.spec?.squad?.members ?? []) {
+    if (mem.ref === ref) return mem.agent?.name ?? "";
+  }
+  return "";
+}
+
+/** How many squad members of this entry carry a manual rename. */
+function memberRenameCount(e: TemplateEntry): number {
+  if (!isSquadDoc(e.doc)) return 0;
+  let n = 0;
+  for (const mem of e.doc.spec?.squad?.members ?? []) {
+    const ref = mem.ref;
+    const original = mem.agent?.name ?? "";
+    const override = ref ? e.memberNameOverrides?.[ref]?.trim() : undefined;
+    if (ref && override && override !== original) n += 1;
+  }
+  return n;
 }
 
 function isSquadDoc(doc: ResourceTemplateDoc): boolean {
@@ -1149,31 +1319,45 @@ function isSquadDoc(doc: ResourceTemplateDoc): boolean {
 
 /**
  * Returns a copy of the template doc with the top-level name overridden in
- * both metadata and spec. Used for the CLO-503 pre-apply re-validation: the
- * backend derives plan.conflicts from the doc name it receives, so validating
- * with the override applied tells us whether the manually-typed new name is
- * still taken in the workspace.
+ * both metadata and spec, plus any squad member renames applied to
+ * spec.squad.members[].agent.name. Used for the CLO-503 pre-apply
+ * re-validation: the backend derives plan.conflicts from the doc names it
+ * receives, so validating with the overrides applied tells us whether each
+ * manually-typed new name is still taken in the workspace.
  */
-function withNameOverride(
+function withNameOverrides(
   doc: ResourceTemplateDoc,
-  name: string,
+  name?: string,
+  memberOverrides?: Record<string, string>,
 ): ResourceTemplateDoc {
-  const metadata = doc.metadata ? { ...doc.metadata, name } : { name };
-  if (doc.kind === "squad" && doc.spec?.squad) {
-    return {
-      ...doc,
-      metadata,
-      spec: { ...doc.spec, squad: { ...doc.spec.squad, name } },
-    };
+  let out = doc;
+  if (name) {
+    const metadata = out.metadata ? { ...out.metadata, name } : { name };
+    if (out.kind === "squad" && out.spec?.squad) {
+      out = {
+        ...out,
+        metadata,
+        spec: { ...out.spec, squad: { ...out.spec.squad, name } },
+      };
+    } else if (out.spec?.agent) {
+      out = {
+        ...out,
+        metadata,
+        spec: { ...out.spec, agent: { ...out.spec.agent, name } },
+      };
+    } else {
+      out = { ...out, metadata };
+    }
   }
-  if (doc.spec?.agent) {
-    return {
-      ...doc,
-      metadata,
-      spec: { ...doc.spec, agent: { ...doc.spec.agent, name } },
-    };
+  if (out.kind === "squad" && out.spec?.squad?.members && memberOverrides) {
+    const members = out.spec.squad.members.map((mem) => {
+      const override = mem.ref ? memberOverrides[mem.ref]?.trim() : undefined;
+      if (!override || !mem.agent || override === mem.agent.name) return mem;
+      return { ...mem, agent: { ...mem.agent, name: override } };
+    });
+    out = { ...out, spec: { ...out.spec, squad: { ...out.spec.squad, members } } };
   }
-  return { ...doc, metadata };
+  return out;
 }
 
 /** The template's own members_mode, when it is a valid squad mode. */

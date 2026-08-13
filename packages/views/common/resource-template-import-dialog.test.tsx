@@ -492,4 +492,208 @@ describe("ResourceTemplateImportDialog", () => {
     // The import button stays disabled while validation errors block.
     expect(screen.getByRole("button", { name: /^import$/i })).toBeDisabled();
   });
+
+  // --- CLO-503 round 2: squad templates with member-agent conflicts ---
+
+  const SQUAD_WITH_MEMBERS = {
+    schema_version: "1.0",
+    template_id: "tpl-3",
+    kind: "squad",
+    metadata: { name: "Ops Squad", source_workspace: "ws-1" },
+    spec: {
+      squad: {
+        name: "Ops Squad",
+        members_mode: "embedded",
+        leader_ref: "qa-review-agent",
+        members: [
+          { ref: "qa-review-agent", role: "leader", agent: { name: "qa-review-agent" } },
+          { ref: "dev-helper", role: "member", agent: { name: "dev-helper" } },
+        ],
+      },
+    },
+  };
+
+  const MEMBER_CONFLICTS = [
+    { kind: "squad", name: "Ops Squad", existing_id: "sq-0" },
+    { kind: "agent", name: "qa-review-agent", existing_id: "ag-1" },
+    { kind: "agent", name: "dev-helper", existing_id: "ag-2" },
+  ];
+
+  it("squad import: every member-agent conflict gets its own new-name input; apply stays disabled until all are renamed (CLO-503)", async () => {
+    validateSpy.mockResolvedValue(
+      validResponse({
+        agents_to_create: ["qa-review-agent", "dev-helper"],
+        squads_to_create: ["Ops Squad"],
+        conflicts: MEMBER_CONFLICTS,
+      }),
+    );
+
+    renderDialog();
+    await uploadFile("squad-members.json", SQUAD_WITH_MEMBERS);
+    await screen.findByText(/target runtime/i);
+    fireEvent.change(screen.getByLabelText(/target runtime/i), { target: { value: "rt-1" } });
+    fireEvent.click(screen.getByRole("button", { name: /validate/i }));
+    await screen.findByText(/conflicts with 3 existing resource/i);
+
+    // The squad-level input plus one input per conflicting member agent,
+    // all prefilled with the original names.
+    expect((screen.getByLabelText(/^new name$/i) as HTMLInputElement).value).toBe("Ops Squad");
+    const memberInputs = screen.getAllByLabelText(/new name for member/i);
+    expect(memberInputs).toHaveLength(2);
+    expect((memberInputs[0] as HTMLInputElement).value).toBe("qa-review-agent");
+    expect((memberInputs[1] as HTMLInputElement).value).toBe("dev-helper");
+
+    const apply = screen.getByRole("button", { name: /^import$/i });
+    expect(apply).toBeDisabled();
+    expect(screen.getByText(/3 unresolved name conflicts/i)).toBeInTheDocument();
+
+    // Renaming only the squad keeps the members unresolved: 2 left.
+    fireEvent.change(screen.getByLabelText(/^new name$/i), {
+      target: { value: "Ops Squad-renamed" },
+    });
+    expect(apply).toBeDisabled();
+    expect(screen.getByText(/2 unresolved name conflicts/i)).toBeInTheDocument();
+
+    // Renaming one member leaves exactly one conflict.
+    fireEvent.change(
+      screen.getByLabelText(/new name for member qa-review-agent/i),
+      { target: { value: "qa-review-agent-v2" } },
+    );
+    expect(apply).toBeDisabled();
+    expect(screen.getByText(/1 unresolved name conflicts/i)).toBeInTheDocument();
+
+    // All three renamed → import enabled.
+    fireEvent.change(
+      screen.getByLabelText(/new name for member dev-helper/i),
+      { target: { value: "dev-helper-v2" } },
+    );
+    await waitFor(() => expect(apply).toBeEnabled());
+  });
+
+  it("squad import: renamed members travel as overrides.agents and re-validation runs with member names applied (CLO-503)", async () => {
+    validateSpy.mockResolvedValue(
+      validResponse({
+        agents_to_create: ["qa-review-agent", "dev-helper"],
+        squads_to_create: ["Ops Squad"],
+        conflicts: MEMBER_CONFLICTS,
+      }),
+    );
+    applySpy.mockResolvedValue({
+      applied: true,
+      dry_run: false,
+      created: {
+        agents: [
+          { ref: "qa-review-agent", id: "ag-3", name: "qa-review-agent-v2" },
+          { ref: "dev-helper", id: "ag-4", name: "dev-helper-v2" },
+        ],
+        squads: [{ id: "sq-1", name: "Ops Squad-renamed" }],
+        skills: [],
+      },
+      resource_mapping: {},
+      rolled_back: false,
+      idempotent_replay: false,
+    });
+
+    renderDialog();
+    await uploadFile("squad-members.json", SQUAD_WITH_MEMBERS);
+    await screen.findByText(/target runtime/i);
+    fireEvent.change(screen.getByLabelText(/target runtime/i), { target: { value: "rt-1" } });
+    fireEvent.click(screen.getByRole("button", { name: /validate/i }));
+    await screen.findByText(/conflicts with 3 existing resource/i);
+
+    fireEvent.change(screen.getByLabelText(/^new name$/i), {
+      target: { value: "Ops Squad-renamed" },
+    });
+    fireEvent.change(
+      screen.getByLabelText(/new name for member qa-review-agent/i),
+      { target: { value: "qa-review-agent-v2" } },
+    );
+    fireEvent.change(
+      screen.getByLabelText(/new name for member dev-helper/i),
+      { target: { value: "dev-helper-v2" } },
+    );
+    const apply = screen.getByRole("button", { name: /^import$/i });
+    await waitFor(() => expect(apply).toBeEnabled());
+    fireEvent.click(apply);
+    await waitFor(() => expect(applySpy).toHaveBeenCalledTimes(1));
+
+    // The pre-apply re-validation carried BOTH the squad rename and the
+    // member renames in the template doc.
+    const revalidated = validateSpy.mock.calls.at(-1)![0] as {
+      template: {
+        metadata: { name: string };
+        spec: { squad: { members: Array<{ agent: { name: string } }> } };
+      };
+    };
+    expect(revalidated.template.metadata.name).toBe("Ops Squad-renamed");
+    expect(revalidated.template.spec.squad.members[0]!.agent.name).toBe("qa-review-agent-v2");
+    expect(revalidated.template.spec.squad.members[1]!.agent.name).toBe("dev-helper-v2");
+
+    // The apply carries the effective fail policy (never rename → no auto
+    // suffix) and the member overrides keyed by the template's member refs.
+    const applyReq = applySpy.mock.calls[0]![0] as {
+      conflict_policy?: string;
+      members_mode?: string;
+      overrides?: {
+        name?: string;
+        agents?: Record<string, { name?: string }>;
+      };
+    };
+    expect(applyReq.conflict_policy).toBe("fail");
+    expect(applyReq.members_mode).toBe("embedded");
+    expect(applyReq.overrides?.name).toBe("Ops Squad-renamed");
+    expect(applyReq.overrides?.agents).toEqual({
+      "qa-review-agent": { name: "qa-review-agent-v2" },
+      "dev-helper": { name: "dev-helper-v2" },
+    });
+  });
+
+  it("squad import: a member new name that still collides blocks apply with a visible reason — no auto suffix (CLO-503)", async () => {
+    validateSpy.mockImplementation(async (req: Record<string, unknown>) => {
+      const template = req.template as {
+        spec: { squad: { members?: Array<{ agent?: { name?: string } }> } };
+      };
+      const memberName = template.spec?.squad?.members?.[0]?.agent?.name;
+      return validResponse({
+        agents_to_create: ["qa-review-agent", "dev-helper"],
+        squads_to_create: ["Ops Squad"],
+        conflicts:
+          memberName === "qa-review-agent-v2"
+            ? [
+                { kind: "squad", name: "Ops Squad-renamed", existing_id: "sq-0" },
+                { kind: "agent", name: "qa-review-agent-v2", existing_id: "ag-9" },
+                { kind: "agent", name: "dev-helper-v2", existing_id: "ag-2" },
+              ]
+            : MEMBER_CONFLICTS,
+      });
+    });
+
+    renderDialog();
+    await uploadFile("squad-members.json", SQUAD_WITH_MEMBERS);
+    await screen.findByText(/target runtime/i);
+    fireEvent.change(screen.getByLabelText(/target runtime/i), { target: { value: "rt-1" } });
+    fireEvent.click(screen.getByRole("button", { name: /validate/i }));
+    await screen.findByText(/conflicts with 3 existing resource/i);
+
+    fireEvent.change(screen.getByLabelText(/^new name$/i), {
+      target: { value: "Ops Squad-renamed" },
+    });
+    fireEvent.change(
+      screen.getByLabelText(/new name for member qa-review-agent/i),
+      { target: { value: "qa-review-agent-v2" } },
+    );
+    fireEvent.change(
+      screen.getByLabelText(/new name for member dev-helper/i),
+      { target: { value: "dev-helper-v2" } },
+    );
+    const apply = screen.getByRole("button", { name: /^import$/i });
+    await waitFor(() => expect(apply).toBeEnabled());
+
+    fireEvent.click(apply);
+
+    // The member's new name still collides → visible red block, apply never
+    // called (the backend would have auto-suffixed under rename).
+    expect(await screen.findByText(/still conflicts with an existing resource/i)).toBeInTheDocument();
+    expect(applySpy).not.toHaveBeenCalled();
+  });
 });

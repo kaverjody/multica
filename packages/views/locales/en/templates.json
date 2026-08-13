@@ -84,6 +84,7 @@
     "trust_continue": "Continue to review",
     "conflict_fail_hint": "{{count}} name conflict(s) block the import. Enter a new name for each conflicting template below, or choose another policy.",
     "conflict_entry_hint": "This template conflicts with {{count}} existing resource(s) — enter a new name below to resolve it.",
+    "conflict_member_new_name_label": "New name for member {{name}}",
     "conflict_new_name_label": "New name",
     "conflict_rename_hint": "{{count}} conflicting template(s) need a new name. Type a different name in each highlighted field — the import stays disabled until you do.",
     "apply_blocked_conflicts": "There are {{count}} unresolved name conflicts — enter a new name for each conflicting template to enable import.",

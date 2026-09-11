@@ -25,6 +25,7 @@ import type modals from "../locales/en/modals.json";
 import type runtimes from "../locales/en/runtimes.json";
 import type layout from "../locales/en/layout.json";
 import type usage from "../locales/en/usage.json";
+import type issueDocuments from "../locales/en/issue-documents.json";
 import type squads from "../locales/en/squads.json";
 import type billing from "../locales/en/billing.json";
 
@@ -66,6 +67,7 @@ declare global {
     runtimes: typeof runtimes;
     layout: typeof layout;
     usage: typeof usage;
+    "issue-documents": typeof issueDocuments;
     squads: typeof squads;
     billing: typeof billing;
   }

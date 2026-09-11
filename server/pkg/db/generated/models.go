@@ -792,6 +792,23 @@ type IssueDependency struct {
 	Type             string      `json:"type"`
 }
 
+type IssueDocument struct {
+	ID               pgtype.UUID        `json:"id"`
+	WorkspaceID      pgtype.UUID        `json:"workspace_id"`
+	IssueID          pgtype.UUID        `json:"issue_id"`
+	Type             string             `json:"type"`
+	Title            string             `json:"title"`
+	Content          pgtype.Text        `json:"content"`
+	ContentType      string             `json:"content_type"`
+	FileAttachmentID pgtype.UUID        `json:"file_attachment_id"`
+	Version          int32              `json:"version"`
+	Status           string             `json:"status"`
+	AuthorType       string             `json:"author_type"`
+	AuthorID         pgtype.UUID        `json:"author_id"`
+	CreatedAt        pgtype.Timestamptz `json:"created_at"`
+	UpdatedAt        pgtype.Timestamptz `json:"updated_at"`
+}
+
 type IssueLabel struct {
 	ID           pgtype.UUID        `json:"id"`
 	WorkspaceID  pgtype.UUID        `json:"workspace_id"`

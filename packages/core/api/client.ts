@@ -125,6 +125,13 @@ import type {
   IssueLabelsResponse,
   LabelResourceType,
   ResourceLabelsResponse,
+  IssueDocumentDetail,
+  IssueDocumentListResponse,
+  IssueDocumentGroupListResponse,
+  IssueDocumentVersionsResponse,
+  ListIssueDocumentsParams,
+  ListIssueDocumentGroupsParams,
+  CreateIssueDocumentRequest,
   PinnedItem,
   CreatePinRequest,
   PinnedItemType,
@@ -404,6 +411,14 @@ import {
   EMPTY_LIST_ISSUE_STATUSES_RESPONSE,
   EMPTY_ISSUE_STATUS_ENTRY,
   EMPTY_RESOURCE_LABELS_RESPONSE,
+  IssueDocumentListResponseSchema,
+  IssueDocumentGroupListResponseSchema,
+  IssueDocumentDetailResponseSchema,
+  IssueDocumentVersionsResponseSchema,
+  EMPTY_ISSUE_DOCUMENT_LIST_RESPONSE,
+  EMPTY_ISSUE_DOCUMENT_GROUP_LIST_RESPONSE,
+  EMPTY_ISSUE_DOCUMENT_DETAIL,
+  EMPTY_ISSUE_DOCUMENT_VERSIONS_RESPONSE,
   GitHubConnectResponseSchema,
   ListGitHubInstallationsResponseSchema,
   ListGitHubRepositoriesResponseSchema,
@@ -869,6 +884,62 @@ export class ApiClient {
     });
     return parseWithFallback(raw, UserSchema, EMPTY_USER, {
       endpoint: "PATCH /api/me",
+    });
+  }
+
+  // Issue-flow intermediate documents (Issue Documents tab, CLO-278).
+  async listIssueDocuments(params?: ListIssueDocumentsParams): Promise<IssueDocumentListResponse> {
+    const search = new URLSearchParams();
+    if (params?.type) search.set("type", params.type);
+    if (params?.status) search.set("status", params.status);
+    if (params?.issue_id) search.set("issue_id", params.issue_id);
+    if (params?.q?.trim()) search.set("q", params.q.trim());
+    if (params?.sort) search.set("sort", params.sort);
+    if (params?.order) search.set("order", params.order);
+    if (params?.limit !== undefined) search.set("limit", String(params.limit));
+    if (params?.offset !== undefined) search.set("offset", String(params.offset));
+    const raw = await this.fetch<unknown>(`/api/issue-documents?${search}`);
+    return parseWithFallback(raw, IssueDocumentListResponseSchema, EMPTY_ISSUE_DOCUMENT_LIST_RESPONSE, {
+      endpoint: "GET /api/issue-documents",
+    });
+  }
+
+  async listIssueDocumentGroups(params?: ListIssueDocumentGroupsParams): Promise<IssueDocumentGroupListResponse> {
+    const search = new URLSearchParams();
+    if (params?.type) search.set("type", params.type);
+    if (params?.status) search.set("status", params.status);
+    if (params?.issue_id) search.set("issue_id", params.issue_id);
+    if (params?.q?.trim()) search.set("q", params.q.trim());
+    if (params?.sort) search.set("sort", params.sort);
+    if (params?.order) search.set("order", params.order);
+    search.set("group", "issue");
+    const raw = await this.fetch<unknown>(`/api/issue-documents?${search}`);
+    return parseWithFallback(raw, IssueDocumentGroupListResponseSchema, EMPTY_ISSUE_DOCUMENT_GROUP_LIST_RESPONSE, {
+      endpoint: "GET /api/issue-documents?group=issue",
+    });
+  }
+
+  async getIssueDocument(id: string): Promise<IssueDocumentDetail> {
+    const raw = await this.fetch<unknown>(`/api/issue-documents/${id}`);
+    return parseWithFallback(raw, IssueDocumentDetailResponseSchema, EMPTY_ISSUE_DOCUMENT_DETAIL, {
+      endpoint: "GET /api/issue-documents/{id}",
+    });
+  }
+
+  async getIssueDocumentVersions(id: string): Promise<IssueDocumentVersionsResponse> {
+    const raw = await this.fetch<unknown>(`/api/issue-documents/${id}/versions`);
+    return parseWithFallback(raw, IssueDocumentVersionsResponseSchema, EMPTY_ISSUE_DOCUMENT_VERSIONS_RESPONSE, {
+      endpoint: "GET /api/issue-documents/{id}/versions",
+    });
+  }
+
+  async createIssueDocument(data: CreateIssueDocumentRequest): Promise<IssueDocumentDetail> {
+    const raw = await this.fetch<unknown>("/api/issue-documents", {
+      method: "POST",
+      body: JSON.stringify(data),
+    });
+    return parseWithFallback(raw, IssueDocumentDetailResponseSchema, EMPTY_ISSUE_DOCUMENT_DETAIL, {
+      endpoint: "POST /api/issue-documents",
     });
   }
 

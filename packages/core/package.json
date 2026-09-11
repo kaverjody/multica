@@ -159,6 +159,8 @@
     "./skills/frontmatter": "./skills/frontmatter.ts",
     "./skills/pack-archive": "./skills/pack-archive.ts",
     "./skills/stores": "./skills/stores/index.ts",
+    "./issue-documents": "./issue-documents/index.ts",
+    "./issue-documents/queries": "./issue-documents/queries.ts",
     "./autopilots/stores": "./autopilots/stores/index.ts"
   },
   "dependencies": {

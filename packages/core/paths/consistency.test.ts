@@ -15,6 +15,7 @@ describe("paths.workspace() shape", () => {
     // that each method emits its explicitly registered workspace subpath.
     const expectedSegments: Array<[string, string]> = [
       ["usage", "usage"],
+      ["issueDocuments", "issue-documents"],
       ["issues", "issues"],
       ["projects", "projects"],
       ["autopilots", "autopilots"],

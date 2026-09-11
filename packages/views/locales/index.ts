@@ -21,6 +21,7 @@ import enModals from "./en/modals.json";
 import enRuntimes from "./en/runtimes.json";
 import enLayout from "./en/layout.json";
 import enUsage from "./en/usage.json";
+import enIssueDocuments from "./en/issue-documents.json";
 import enUi from "./en/ui.json";
 import enSquads from "./en/squads.json";
 import enBilling from "./en/billing.json";
@@ -46,6 +47,7 @@ import zhHansModals from "./zh-Hans/modals.json";
 import zhHansRuntimes from "./zh-Hans/runtimes.json";
 import zhHansLayout from "./zh-Hans/layout.json";
 import zhHansUsage from "./zh-Hans/usage.json";
+import zhHansIssueDocuments from "./zh-Hans/issue-documents.json";
 import zhHansUi from "./zh-Hans/ui.json";
 import zhHansSquads from "./zh-Hans/squads.json";
 import zhHansBilling from "./zh-Hans/billing.json";
@@ -71,6 +73,7 @@ import koModals from "./ko/modals.json";
 import koRuntimes from "./ko/runtimes.json";
 import koLayout from "./ko/layout.json";
 import koUsage from "./ko/usage.json";
+import koIssueDocuments from "./ko/issue-documents.json";
 import koUi from "./ko/ui.json";
 import koSquads from "./ko/squads.json";
 import koBilling from "./ko/billing.json";
@@ -96,6 +99,7 @@ import jaModals from "./ja/modals.json";
 import jaRuntimes from "./ja/runtimes.json";
 import jaLayout from "./ja/layout.json";
 import jaUsage from "./ja/usage.json";
+import jaIssueDocuments from "./ja/issue-documents.json";
 import jaUi from "./ja/ui.json";
 import jaSquads from "./ja/squads.json";
 import jaBilling from "./ja/billing.json";
@@ -127,6 +131,7 @@ export const RESOURCES: Record<SupportedLocale, LocaleResources> = {
     runtimes: enRuntimes,
     layout: enLayout,
     usage: enUsage,
+    "issue-documents": enIssueDocuments,
     ui: enUi,
     squads: enSquads,
     billing: enBilling,
@@ -154,6 +159,7 @@ export const RESOURCES: Record<SupportedLocale, LocaleResources> = {
     runtimes: zhHansRuntimes,
     layout: zhHansLayout,
     usage: zhHansUsage,
+    "issue-documents": zhHansIssueDocuments,
     ui: zhHansUi,
     squads: zhHansSquads,
     billing: zhHansBilling,
@@ -181,6 +187,7 @@ export const RESOURCES: Record<SupportedLocale, LocaleResources> = {
     runtimes: koRuntimes,
     layout: koLayout,
     usage: koUsage,
+    "issue-documents": koIssueDocuments,
     ui: koUi,
     squads: koSquads,
     billing: koBilling,
@@ -208,6 +215,7 @@ export const RESOURCES: Record<SupportedLocale, LocaleResources> = {
     runtimes: jaRuntimes,
     layout: jaLayout,
     usage: jaUsage,
+    "issue-documents": jaIssueDocuments,
     ui: jaUi,
     squads: jaSquads,
     billing: jaBilling,

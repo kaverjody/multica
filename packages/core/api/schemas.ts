@@ -63,6 +63,10 @@ import type {
   ListGitHubInstallationsResponse,
   ListGitHubRepositoriesResponse,
   ListLabelsResponse,
+  IssueDocumentDetail,
+  IssueDocumentListResponse,
+  IssueDocumentGroupListResponse,
+  IssueDocumentVersionsResponse,
   ListWebhookDeliveriesResponse,
   IssueStatusEntry,
   ListIssueStatusesResponse,
@@ -527,6 +531,102 @@ export const ResourceLabelsResponseSchema = z.object({
 
 export const EMPTY_RESOURCE_LABELS_RESPONSE: ResourceLabelsResponse = {
   labels: [],
+};
+
+const IssueDocumentSummarySchema = z.object({
+  id: z.string(),
+  workspace_id: z.string(),
+  issue_id: z.string(),
+  issue_identifier: z.string(),
+  issue_title: z.string(),
+  type: z.string(),
+  title: z.string(),
+  version: z.number().default(1),
+  status: z.string(),
+  content_type: z.string(),
+  file_attachment_id: z.string().nullable().default(null),
+  author_type: z.string(),
+  author_id: z.string(),
+  author_name: z.string().optional().default(""),
+  created_at: z.string(),
+  updated_at: z.string(),
+}).loose();
+
+const IssueDocumentDetailSchema = IssueDocumentSummarySchema.extend({
+  content: z.string().nullable().optional().default(null),
+}).loose();
+
+const IssueDocumentVersionSchema = z.object({
+  id: z.string(),
+  version: z.number().default(1),
+  status: z.string(),
+  title: z.string(),
+  content_type: z.string(),
+  file_attachment_id: z.string().nullable().default(null),
+  created_at: z.string(),
+  updated_at: z.string(),
+}).loose();
+
+export const IssueDocumentListResponseSchema = z.object({
+  items: z.array(IssueDocumentSummarySchema).default([]),
+  total: z.number().default(0),
+}).loose();
+
+const IssueDocumentGroupSchema = z.object({
+  issue_id: z.string(),
+  issue_identifier: z.string(),
+  issue_title: z.string(),
+  items: z.array(IssueDocumentSummarySchema).default([]),
+  total: z.number().default(0),
+}).loose();
+
+export const IssueDocumentGroupListResponseSchema = z.object({
+  groups: z.array(IssueDocumentGroupSchema).default([]),
+  total: z.number().default(0),
+}).loose();
+
+export const IssueDocumentDetailResponseSchema = IssueDocumentDetailSchema;
+
+export const IssueDocumentVersionsResponseSchema = z.object({
+  issue_id: z.string(),
+  type: z.string(),
+  items: z.array(IssueDocumentVersionSchema).default([]),
+}).loose();
+
+export const EMPTY_ISSUE_DOCUMENT_LIST_RESPONSE: IssueDocumentListResponse = {
+  items: [],
+  total: 0,
+};
+
+export const EMPTY_ISSUE_DOCUMENT_GROUP_LIST_RESPONSE: IssueDocumentGroupListResponse = {
+  groups: [],
+  total: 0,
+};
+
+export const EMPTY_ISSUE_DOCUMENT_DETAIL: IssueDocumentDetail = {
+  id: "",
+  workspace_id: "",
+  issue_id: "",
+  issue_identifier: "",
+  issue_title: "",
+  type: "other",
+  title: "",
+  version: 1,
+  status: "draft",
+  content_type: "markdown",
+  file_attachment_id: null,
+  author_type: "member",
+  author_id: "",
+  author_name: "",
+  created_at: "",
+  updated_at: "",
+  content: null,
+};
+
+export const EMPTY_ISSUE_DOCUMENT_VERSIONS_RESPONSE: IssueDocumentVersionsResponse = {
+  issue_id: "",
+  type: "other",
+  items: [],
 };
 
 // Saved issue views (MUL-4796). `query`/`display` are opaque definition
